@@ -1,0 +1,150 @@
+English | [中文](README.zh-CN.md)
+
+# agent_sys v2 — an agent workbench for Infera performance work
+
+One engineer steers a group of Claude Code agents that find and remove the bottlenecks of an Infera deployment —
+topology and parallelism, engine flags, CPU paths, collectives, KV transfer or kernels — with every claim backed by a
+measured result, and every agent visible and steerable in a web console.
+
+- **A task is a prompt and a workspace.** Agents decide what to investigate; skills give them reliable tools. The
+  task graph grows during the work: an agent drafts subtasks, you approve them (one click for a whole plan).
+- **Evidence, not procedure, is checked.** Acceptance checks that the harness runs when an agent says it is done (a
+  failure goes back to the agent); results in one schema feed a ledger with the baseline, the best and the trend.
+- **Observable and controllable.** Live output of every run and what it was given, cost, what it waits for; message,
+  stop, take over in a terminal, raise the budget, review. A machine is held by one task at a time.
+
+It stands beside [`../agent_sys`](../agent_sys) (v1, the task-package runtime), which it does not touch; both can
+be installed in one environment (`agent-sys` is v1's command, `agent-sys-v2` this one's). The design — product, web
+UI, back end, migration — is [`docs/design.zh-CN.md`](docs/design.zh-CN.md). The execution model and the web UI are
+ported from conch v1.0.1.
+
+## Requirements
+
+- Linux, Python 3.10+, `tmux`.
+- A working Claude Code configuration in `~/.claude/settings.json` (credentials, gateway, model mapping). Runs use the
+  `claude` CLI that comes with `claude-agent-sdk` (pinned) and your user settings; no other setup.
+
+## Install
+
+From the root of the Infera checkout, in a virtual environment of your choice:
+
+```bash
+python3 -m venv ~/.venvs/agent-sys-v2 && . ~/.venvs/agent-sys-v2/bin/activate
+pip install -e agent_sys_v2            # `uv pip install -e agent_sys_v2` works too; add [dev] for the tests
+agent-sys-v2 --version
+```
+
+## Run
+
+```bash
+agent-sys-v2 serve
+```
+
+- The server goes into a tmux window (`tmux -L agent_sys`, window `server`) and listens **only on a Unix socket**,
+  `/tmp/agent_sys-<uid>/agent_sys.sock`, in a directory only you can enter. It prints where it is and the next line.
+- On your desktop, forward a port to the socket and open the console:
+
+  ```bash
+  ssh -N -L 8765:/tmp/agent_sys-<uid>/agent_sys.sock <you>@<this host>
+  # then open http://localhost:8765
+  ```
+
+- Logs: `tmux -L agent_sys attach -t agent_sys:server`. Stop: Ctrl-C in that window, or
+  `tmux -L agent_sys kill-window -t agent_sys:server`. Restarting the server does not touch running tasks: each run
+  is a process of its own in the same tmux, and the server picks them up again from their files.
+- `--foreground` runs it in the current terminal; `--home DIR` (or `AGENT_SYS_HOME`) picks another home, `--sock PATH`
+  another socket, and `AGENT_SYS_TMUX=<name>` another tmux server (for a second server next to your real one).
+
+Everything lives in `AGENT_SYS_HOME`, default `~/agent_sys_home`, created on first use:
+
+```
+agent_sys.yaml  rules/  knowledge/                     global settings, rules and lessons
+campaigns/<c>/project.yaml                            goal, machines, ledger metric, skills, agent defaults
+campaigns/<c>/rules/project.md                        the campaign's background, injected into every run
+campaigns/<c>/tasks/<type>/<name>.md                  a task: its prompt (and frontmatter)
+campaigns/<c>/workspaces/<type>/<name>/               progress.md, report.md, results/*.json, .agent_sys/runs/
+campaigns/<c>/repos/                                  code the agents work on (not scanned)
+```
+
+## A first campaign
+
+1. On the home page, **New project** with the template **Infera 性能优化** (`infera-perf`); or
+   `agent-sys-v2 new glm52-agentx --template infera-perf --title "GLM-5.2 4P4D AgentX"`.
+2. In the campaign's **Settings**: the goal, the machines (one per line: `host gpus note`), the ledger's primary
+   metric (default `tok_s_gpu`).
+3. Write `campaigns/<c>/rules/project.md`: model, engine, kit, workload, which branch. Clone Infera into
+   `campaigns/<c>/repos/Infera`: the agents work from the campaign directory and the skills refer to
+   `repos/Infera/examples/<kit>`.
+4. **New task** of type `baseline`, tick its machines, **Create and queue**: it starts at once. Follow it in **Run
+   output**; write to the agent in the box at the bottom (even while it runs); **Stop**; **Take over in terminal**.
+5. Then a `diagnose` task depending on the baseline. It writes a report and drafts `experiment` subtasks; approve them
+   all with **Join them all** in its drawer. Each experiment holds its machines; the others wait for them.
+6. The **Ledger** tab shows every result against the baseline. A task that is done but fails its checks comes back
+   to you under **Needs you** with the checks' output.
+
+A task file, with what agent_sys v2 adds:
+
+```markdown
+---
+title: SPF scheduling at C64
+depends_on: [baseline/b0]
+machines: [smc-a16-19]            # held while it runs and while it waits for you
+checks:                           # run when the agent marks progress.md done; a failure goes back to it
+  - test -s "$AGENT_SYS_WORKSPACE/report.md"
+  - '"$AGENT_SYS_PYTHON" -m agent_sys_v2.ledger check "$AGENT_SYS_WORKSPACE/results" --require-verdict'
+check_retries: 2
+agent: {model: opus, effort: high, budget_usd: 50}
+---
+## Task
+...
+```
+
+A result is `results/<label>.json` in the `infera.result/v1` schema (see
+[`agent_sys_v2/skills/infera-bench/SKILL.md`](agent_sys_v2/skills/infera-bench/SKILL.md)); the A/B verdict comes from
+`agent_sys_v2/skills/infera-experiment/scripts/ab_judge.py`.
+
+## Look around without a model
+
+```bash
+python agent_sys_v2/tools/demo.py /tmp/$USER/agent_sys_demo
+AGENT_SYS_TMUX=asys-demo agent-sys-v2 serve --home /tmp/$USER/agent_sys_demo --sock /tmp/agent_sys-$(id -u)/demo.sock
+ssh -N -L 8766:/tmp/agent_sys-<uid>/demo.sock <you>@<this host>     # on your desktop; open http://localhost:8766
+```
+
+A campaign with three machines, tasks in most states, a ledger and a drafted plan. Its `project.yaml` sets
+`agent.replay`, so every run plays a recorded session back (`tests/fixtures/events/`) instead of calling a model.
+Stop it with `tmux -L asys-demo kill-server`.
+
+## Develop
+
+```bash
+pip install -e "agent_sys_v2[dev]"
+cd agent_sys_v2 && python -m pytest tests -q     # 3-4 minutes, needs tmux; no test calls a model
+node --test agent_sys_v2/web/test/*.test.js      # the web UI's pure functions and its English dictionary
+ruff format --check . && ruff check .            # the repository's settings
+```
+
+| Path | What |
+|---|---|
+| `agent_sys_v2/server.py` | REST + SSE; scans the files into memory and pushes changes |
+| `agent_sys_v2/runs.py`, `runner.py`, `launch.py` | one Claude Code session per task, one runner process per round in tmux; what a run is given |
+| `agent_sys_v2/sched.py`, `machines.py` | dependencies, slots and machines |
+| `agent_sys_v2/checks.py`, `ledger.py`, `skills.py` | acceptance checks, the results ledger, the skills index |
+| `agent_sys_v2/model.py`, `scan.py`, `ops.py`, `knowledge.py`, `questions.py`, `files.py`, `i18n.py`, `cli.py` | the files, rules and lessons, questions.md, workspace files, English, the command line |
+| `agent_sys_v2/web/` | the UI: Preact + htm, no build step ([README](agent_sys_v2/web/README.md)) |
+| `agent_sys_v2/templates/` | the protocol injected into every run (zh / en) and the campaign templates `blank`, `infera-perf` |
+| `agent_sys_v2/skills/` | the Infera performance skills ([README](agent_sys_v2/skills/README.md)) |
+| `tests/` | pytest; runs replay recorded sessions |
+| `tools/demo.py` | the demo home above |
+| `docs/design.zh-CN.md` | the design |
+
+## When something is off
+
+- *the socket's directory can be entered by other users*: point `--sock` at a directory only you can enter.
+- *already has a server running*: one server per `AGENT_SYS_HOME` (two schedulers would start a task twice).
+- A queued task that does not start says why on its card: upstream tasks, machines held by another task, slots, or
+  auto start switched off.
+- Runs use `~/.claude/settings.json`; the server drops `CLAUDE*` / `ANTHROPIC*` variables from the shell it was
+  started in, so a server started inside a Claude Code session still uses your settings.
+- The v1 runtime also reads `AGENT_SYS_HOME` (as its state prefix); if you set it for v1, v2 makes its directories
+  there too, side by side.
