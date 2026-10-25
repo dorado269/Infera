@@ -268,6 +268,7 @@ EN = {
     "agent_sys server 已在运行：{sock}": "agent_sys server is already running: {sock}",
     "agent_sys server 已退出，按回车关闭窗口": "agent_sys server has exited; press Enter to close the window",
     "agent_sys server 已在 tmux -L {tmux} 的 {window} 窗口启动：{sock}": "agent_sys server started in window {window} of tmux -L {tmux}: {sock}",
+    "agent_sys server 没有启动起来（tmux -L {tmux} 的 {window} 窗口），窗口里显示：": "agent_sys server did not start (window {window} of tmux -L {tmux}); the window shows:",
     "查看日志：tmux -L {tmux} attach -t agent_sys:{window}": "Its log: tmux -L {tmux} attach -t agent_sys:{window}",
     "在你的电脑上运行：ssh -N -L 8765:{sock} {host}\n然后用浏览器打开 http://localhost:8765": "On your computer run: ssh -N -L 8765:{sock} {host}\nthen open http://localhost:8765 in a browser",
     "AGENT_SYS_HOME：默认取环境变量 AGENT_SYS_HOME，没有则 {default}（当前 %(default)s）": "AGENT_SYS_HOME: default $AGENT_SYS_HOME, else {default} (now %(default)s)",

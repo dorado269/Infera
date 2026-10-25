@@ -39,6 +39,20 @@ def test_version(capsys):
     assert e.value.code == 0 and capsys.readouterr().out.strip() == f"agent-sys-v2 {__version__}"
 
 
+def test_runs_from_the_root_of_an_infera_checkout(tmp_path):
+    """`python -m agent_sys_v2...` (the server in tmux, the runners, the checks, the agent's ledger check) puts the
+    current directory first on sys.path. At the root of an Infera checkout agent_sys_v2/ is the project directory, not
+    the package: it must not hide the installed package (an editable install too)."""
+    (tmp_path / "agent_sys_v2").mkdir()
+    out = subprocess.run(
+        [sys.executable, "-m", "agent_sys_v2.cli", "--version"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert out.stdout.strip() == f"agent-sys-v2 {__version__}", out.stderr
+
+
 def test_one_server_per_home(tmp_path):
     home = tmp_path / "home"
     init_home(home)
@@ -129,3 +143,24 @@ def test_serve_in_tmux_leaves_other_servers_alone(tmp_path, own_tmux, monkeypatc
     )
     assert cli.serve_in_tmux(home, socks / "a.sock") == 0  # the same one: already running
     assert "已在运行" in capsys.readouterr().out
+
+
+def test_serve_in_tmux_says_when_the_server_does_not_start(tmp_path, own_tmux, monkeypatch, capsys):
+    """A server that exits at once (here: its socket's directory is not private) is reported with what its window
+    shows, not as started; `serve` again restarts it in the same window."""
+    monkeypatch.setattr(cli, "TMUX", own_tmux)
+    home = tmp_path / "home"
+    init_home(home)
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o755)
+    start = time.time()
+    assert cli.serve_in_tmux(home, shared / "a.sock") == 1
+    assert time.time() - start < cli.START_SECONDS  # not waiting for a server that has exited
+    out = capsys.readouterr()
+    assert "没有启动起来" in out.err and str(shared) in out.err and "ssh" not in out.out
+
+    shared.chmod(0o700)
+    assert cli.serve_in_tmux(home, shared / "a.sock") == 0
+    assert cli.listening(shared / "a.sock") and list(windows(own_tmux)) == ["server"]
+    assert "server 窗口启动" in capsys.readouterr().out

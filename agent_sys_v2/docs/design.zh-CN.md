@@ -84,7 +84,7 @@ agent_sys v2 是 Infera 的**性能工程 agent 工作台**。一名工程师在
 | **Check** | agent 报告完成后由 harness 执行的验收命令 | task frontmatter 的 `checks`；结果在 `runs/<run>/checks.json` |
 | **Result** | 一个测量点，统一 schema | `workspaces/…/results/**/*.json`（`schema: infera.result/v1`） |
 | **Machine** | campaign 可用的节点；任务声明要用哪些，调度器保证互斥 | `project.yaml` 的 `machines`；task frontmatter 的 `machines` |
-| **Skill** | 可复用的操作手册和脚本，例如部署、测量、分诊、A/B | `agent_sys_v2/skills/<名字>/SKILL.md`；campaign 自己的放 `campaigns/<c>/skills/` |
+| **Skill** | 可复用的操作手册和脚本，例如部署、测量、分诊、A/B | `src/agent_sys_v2/skills/<名字>/SKILL.md`；campaign 自己的放 `campaigns/<c>/skills/` |
 
 另外两个是从 conch 继承的约定：**规则**（每次运行都注入）和**经验**（任务写出候选，人批准后进经验库，经验库的索引会注入）。
 
@@ -407,7 +407,7 @@ skills 的原则：
 ### 8.3 MVP 现状（本分支）
 
 - **代码**：独立目录 `Infera/agent_sys_v2/`，和 v1 的 `agent_sys/` 并列。
-  - `agent_sys_v2/`：Python 包，包括后端、`web/`、`templates/`、`skills/`；
+  - `src/agent_sys_v2/`：Python 包（src 布局），包括后端、`web/`、`templates/`、`skills/`；
   - `tests/`：测试；
   - `tools/demo.py`：生成不调用模型的演示 campaign；
   - `docs/`：本文；

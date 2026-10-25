@@ -15,7 +15,7 @@ from agent_sys_v2.i18n import EN, PARAM, _, status_word
 from agent_sys_v2.model import AgentSysError, check_name
 from agent_sys_v2.server import create_app
 
-SOURCES = Path(__file__).resolve().parents[1] / "agent_sys_v2"
+SOURCES = Path(__file__).resolve().parents[1] / "src" / "agent_sys_v2"
 CJK = re.compile(r"[一-鿿]")
 REAL_USE = i18n.use  # conftest keeps every other test in Chinese
 

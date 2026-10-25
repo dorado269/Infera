@@ -100,8 +100,8 @@ agent: {model: opus, effort: high, budget_usd: 50}
 ```
 
 A result is `results/<label>.json` in the `infera.result/v1` schema (see
-[`agent_sys_v2/skills/infera-bench/SKILL.md`](agent_sys_v2/skills/infera-bench/SKILL.md)); the A/B verdict comes from
-`agent_sys_v2/skills/infera-experiment/scripts/ab_judge.py`.
+[`src/agent_sys_v2/skills/infera-bench/SKILL.md`](src/agent_sys_v2/skills/infera-bench/SKILL.md)); the A/B verdict comes from
+`src/agent_sys_v2/skills/infera-experiment/scripts/ab_judge.py`.
 
 ## Look around without a model
 
@@ -120,20 +120,20 @@ Stop it with `tmux -L asys-demo kill-server`.
 ```bash
 pip install -e "agent_sys_v2[dev]"
 cd agent_sys_v2 && python -m pytest tests -q     # 3-4 minutes, needs tmux; no test calls a model
-node --test agent_sys_v2/web/test/*.test.js      # the web UI's pure functions and its English dictionary
+node --test src/agent_sys_v2/web/test/*.test.js  # the web UI's pure functions and its English dictionary
 ruff format --check . && ruff check .            # the repository's settings
 ```
 
 | Path | What |
 |---|---|
-| `agent_sys_v2/server.py` | REST + SSE; scans the files into memory and pushes changes |
-| `agent_sys_v2/runs.py`, `runner.py`, `launch.py` | one Claude Code session per task, one runner process per round in tmux; what a run is given |
-| `agent_sys_v2/sched.py`, `machines.py` | dependencies, slots and machines |
-| `agent_sys_v2/checks.py`, `ledger.py`, `skills.py` | acceptance checks, the results ledger, the skills index |
-| `agent_sys_v2/model.py`, `scan.py`, `ops.py`, `knowledge.py`, `questions.py`, `files.py`, `i18n.py`, `cli.py` | the files, rules and lessons, questions.md, workspace files, English, the command line |
-| `agent_sys_v2/web/` | the UI: Preact + htm, no build step ([README](agent_sys_v2/web/README.md)) |
-| `agent_sys_v2/templates/` | the protocol injected into every run (zh / en) and the campaign templates `blank`, `infera-perf` |
-| `agent_sys_v2/skills/` | the Infera performance skills ([README](agent_sys_v2/skills/README.md)) |
+| `src/agent_sys_v2/server.py` | REST + SSE; scans the files into memory and pushes changes |
+| `src/agent_sys_v2/runs.py`, `runner.py`, `launch.py` | one Claude Code session per task, one runner process per round in tmux; what a run is given |
+| `src/agent_sys_v2/sched.py`, `machines.py` | dependencies, slots and machines |
+| `src/agent_sys_v2/checks.py`, `ledger.py`, `skills.py` | acceptance checks, the results ledger, the skills index |
+| `src/agent_sys_v2/model.py`, `scan.py`, `ops.py`, `knowledge.py`, `questions.py`, `files.py`, `i18n.py`, `cli.py` | the files, rules and lessons, questions.md, workspace files, English, the command line |
+| `src/agent_sys_v2/web/` | the UI: Preact + htm, no build step ([README](src/agent_sys_v2/web/README.md)) |
+| `src/agent_sys_v2/templates/` | the protocol injected into every run (zh / en) and the campaign templates `blank`, `infera-perf` |
+| `src/agent_sys_v2/skills/` | the Infera performance skills ([README](src/agent_sys_v2/skills/README.md)) |
 | `tests/` | pytest; runs replay recorded sessions |
 | `tools/demo.py` | the demo home above |
 | `docs/design.zh-CN.md` | the design |

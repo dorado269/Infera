@@ -21,6 +21,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import time
 from itertools import count
 from pathlib import Path
 
@@ -37,6 +38,7 @@ TMUX = os.environ.get(
 # Inherited by the server, they would reach the runners it starts and override the gateway settings in
 # ~/.claude/settings.json.
 PARENT_SESSION = re.compile(r"(CLAUDE\w*|ANTHROPIC\w*|IS_SANDBOX)$")
+START_SECONDS = 30  # `serve` waits this long for the server it put in tmux to listen
 
 
 def clean_env():
@@ -150,9 +152,23 @@ def server_window(run, sock):
     return None
 
 
+def wait_started(run, wid, sock, exited):
+    """Wait for the server in tmux window wid to listen on sock. None once it does; else what the window shows, as soon
+    as the server has exited (its error, then the line `exited`) or after START_SECONDS. Only the screen: a respawned
+    window keeps the scrollback of the server before."""
+    end = time.time() + START_SECONDS
+    while not listening(sock):
+        shown = run("capture-pane", "-p", "-J", "-t", wid).stdout if wid else ""
+        if not wid or exited in shown or time.time() > end:
+            return "\n".join(line.rstrip() for line in shown.strip().splitlines())
+        time.sleep(0.2)
+    return None
+
+
 def serve_in_tmux(home, sock):
     """Run `agent_sys serve --foreground` in tmux -L $AGENT_SYS_TMUX: restarted in place in the window that already serves this
-    socket, else in a new window "server" ("server-2", … if taken), in a new session if there is none."""
+    socket, else in a new window "server" ("server-2", … if taken), in a new session if there is none. Done once the
+    server listens; if it does not, what its window shows is printed (the window stays, with the error)."""
     if listening(sock):
         print(_("agent_sys server 已在运行：{sock}", sock=sock))
     else:
@@ -181,7 +197,8 @@ def serve_in_tmux(home, sock):
                 str(sock),
             ]
         )
-        cmd += f"; echo {shlex.quote(_('agent_sys server 已退出，按回车关闭窗口'))}; read"  # keep the error on screen
+        exited = _("agent_sys server 已退出，按回车关闭窗口")
+        cmd += f"; echo {shlex.quote(exited)}; read"  # keep the error on screen
 
         def run(*args):
             return subprocess.run(
@@ -194,9 +211,13 @@ def serve_in_tmux(home, sock):
             name = line.lstrip("-").split("=")[0]
             if PARENT_SESSION.match(name):
                 run("set-environment", "-g", "-u", name)
+        # new-session and new-window print the window they made: wait_started looks at it
+        new_id = ("-P", "-F", "#{window_id}")
         if run("has-session", "-t", "agent_sys").returncode:
             window = "server"
-            run("new-session", "-d", "-s", "agent_sys", "-n", window, cmd)
+            wid = run(
+                "new-session", "-d", "-s", "agent_sys", "-n", window, *new_id, cmd
+            ).stdout.strip()
         elif wid := server_window(run, sock):
             window = run("display-message", "-p", "-t", wid, "#W").stdout.strip()
             run("respawn-window", "-k", "-t", wid, cmd)
@@ -207,7 +228,27 @@ def serve_in_tmux(home, sock):
                 if "server" not in taken
                 else next(f"server-{n}" for n in count(2) if f"server-{n}" not in taken)
             )
-            run("new-window", "-d", "-t", "agent_sys", "-n", window, cmd)
+            wid = run(
+                "new-window", "-d", "-t", "agent_sys", "-n", window, *new_id, cmd
+            ).stdout.strip()
+        shown = wait_started(run, wid, sock, exited)
+        if shown is not None:
+            print(
+                _(
+                    "agent_sys server 没有启动起来（tmux -L {tmux} 的 {window} 窗口），窗口里显示：",
+                    tmux=TMUX,
+                    window=window,
+                ),
+                shown,
+                _(
+                    "查看日志：tmux -L {tmux} attach -t agent_sys:{window}",
+                    tmux=TMUX,
+                    window=window,
+                ),
+                sep="\n",
+                file=sys.stderr,
+            )
+            return 1
         print(
             _(
                 "agent_sys server 已在 tmux -L {tmux} 的 {window} 窗口启动：{sock}",

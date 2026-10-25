@@ -95,7 +95,7 @@ test('fold: tool calls become one line with their result; messages sent mid-comm
 });
 
 // Recorded runs (agent_sys_v2/tests/fixtures/events), as the server hands them out.
-const recording = (name) => readFileSync(new URL(`../../../tests/fixtures/events/${name}.jsonl`, import.meta.url), 'utf8')
+const recording = (name) => readFileSync(new URL(`../../../../tests/fixtures/events/${name}.jsonl`, import.meta.url), 'utf8')
   .trim().split('\n').map((line, seq) => ({ seq, ...JSON.parse(line) }));
 
 test('fold p2_queue: a message sent mid-command is read when the command ends, in the same round', () => {

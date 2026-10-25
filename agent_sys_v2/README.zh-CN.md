@@ -88,7 +88,7 @@ agent: {model: opus, effort: high, budget_usd: 50}
 ……
 ```
 
-结果文件是 `results/<标签>.json`，格式为 `infera.result/v1`（见 [`agent_sys_v2/skills/infera-bench/SKILL.md`](agent_sys_v2/skills/infera-bench/SKILL.md)）。A/B 判定由 `agent_sys_v2/skills/infera-experiment/scripts/ab_judge.py` 写入。
+结果文件是 `results/<标签>.json`，格式为 `infera.result/v1`（见 [`src/agent_sys_v2/skills/infera-bench/SKILL.md`](src/agent_sys_v2/skills/infera-bench/SKILL.md)）。A/B 判定由 `src/agent_sys_v2/skills/infera-experiment/scripts/ab_judge.py` 写入。
 
 ## 不调用模型先看看
 
@@ -105,7 +105,7 @@ ssh -N -L 8766:/tmp/agent_sys-<uid>/demo.sock <你>@<这台机器>     # 在你�
 ```bash
 pip install -e "agent_sys_v2[dev]"
 cd agent_sys_v2 && python -m pytest tests -q     # 3–4 分钟，需要 tmux；测试都不调用模型
-node --test agent_sys_v2/web/test/*.test.js      # 前端的纯函数和英文词典
+node --test src/agent_sys_v2/web/test/*.test.js  # 前端的纯函数和英文词典
 ruff format --check . && ruff check .            # 仓库的 ruff 配置
 ```
 

@@ -218,7 +218,7 @@ jobs:
       - name: pytest (agent_sys_v2)
         run: python -m pytest tests -q
       - name: node --test (agent_sys_v2 web UI)
-        run: node --test agent_sys_v2/web/test/*.test.js
+        run: node --test src/agent_sys_v2/web/test/*.test.js
 
   # Rust router: clippy + unit/integration tests. GH-hosted ubuntu-latest
   # ships a stable toolchain (with clippy), so no toolchain setup is needed.

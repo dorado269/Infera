@@ -33,8 +33,11 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.dynamic]
 version = {attr = "agent_sys_v2.__version__"}
 
+# src layout: an editable install then puts src/ on sys.path. A package at the top (flat layout) is found by an import
+# hook that comes after sys.path, and `python -m agent_sys_v2...` (the server in tmux, the runners, the checks) run in
+# the Infera repository root would import this directory, agent_sys_v2/, as a namespace package instead.
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 include = ["agent_sys_v2*"]
 namespaces = false        # web/, templates/ and skills/ are package data (below), not packages
 

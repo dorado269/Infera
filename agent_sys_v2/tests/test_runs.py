@@ -459,8 +459,8 @@ def test_slim_events_fold_into_the_same_view(tmp_path):
     lines, and once opened (nothing cut) the same texts."""
     script = tmp_path / "check.mjs"
     script.write_text(f"""
-import {{ fold }} from {json.dumps((Path(__file__).resolve().parents[1] / "agent_sys_v2/web/run.js").as_uri())};
-import {{ setLang }} from {json.dumps((Path(__file__).resolve().parents[1] / "agent_sys_v2/web/i18n.js").as_uri())};
+import {{ fold }} from {json.dumps((Path(__file__).resolve().parents[1] / "src/agent_sys_v2/web/run.js").as_uri())};
+import {{ setLang }} from {json.dumps((Path(__file__).resolve().parents[1] / "src/agent_sys_v2/web/i18n.js").as_uri())};
 setLang('zh');
 const data = JSON.parse(await new Response(process.stdin).text());
 const strip = (items, cut) => items.map(({{ key, whole, wholeIn, wholeOut, chars, ...it }}) => cut
