@@ -15,7 +15,7 @@ plan/rN 起草：experiment/rN-<杠杆或包> × N（子任务，parent: plan/rN
 close/rN 起草：intake/r(N+1)（depends_on: [close/rN]）
 ```
 
-- 第 1 轮的 intake、survey、baseline、profile、plan 由模板在建项目时预置并排队。之后每轮的任务由 intake/rN 按问卷回答起草（survey/rN、plan/rN，需要时 profile/rN 和 baseline/rN），close 的集成曲线就是下一轮的基线，通常不再重做 baseline。
+- 第 1 轮的 intake、survey、baseline、profile、plan 由模板在建项目时预置并排队，我审核后点"开始运行"才开始。之后每轮的任务由 intake/rN 按问卷回答起草（survey/rN、plan/rN，需要时 profile/rN 和 baseline/rN），close 的集成曲线就是下一轮的基线，通常不再重做 baseline。
 - `kind: children` 的依赖：plan 完成、且 `parent: plan/rN` 的任务全部完成或取消后，close 才开始。提前收尾 = 取消剩下的子任务。
 - 你起草的任务都是草稿；我在你的任务抽屉里点"全部纳入托管"，你的子任务和直接依赖你的草稿一起排队。
 - 我介入的地方每轮只有两处：intake 的问卷和 brief、plan 的审核（候选、预算、机器）。其余选择按默认继续，写进"替你做的决定"。

@@ -28,7 +28,7 @@ from pathlib import Path
 from . import __version__, i18n
 from .i18n import _
 from .model import DEFAULT_HOME, AgentSysError
-from .ops import init_home, list_templates, new_project
+from .ops import TEMPLATES, init_home, list_templates, new_project, template_tasks
 
 DEFAULT_SOCK = Path(f"/tmp/agent_sys-{os.getuid()}/agent_sys.sock")
 TMUX = os.environ.get(
@@ -321,6 +321,14 @@ def main(argv=None):
         print(f"agent_sys: {e}", file=sys.stderr)
         return 1
     print(path)
+    if tasks := template_tasks(TEMPLATES / args.template):
+        print(
+            _(
+                "agent_sys: 模板带来的 {n} 个任务等你审核：在看板上检查后点「开始运行」，或手动开始其中一个任务",
+                n=len(tasks),
+            ),
+            file=sys.stderr,
+        )
     return 0
 
 

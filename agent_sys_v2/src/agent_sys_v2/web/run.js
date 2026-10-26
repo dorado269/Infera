@@ -318,7 +318,7 @@ export function LiveStrip({ run, inFlight, bg, session, killed, t }) {
   if (run.host) return html`<div class="live-strip working"><${Icon} name="running" /><span>${tr('该运行在 {host} 上，本机的 agent_sys 只显示，不能停止或接管', { host: run.host })}</span></div>`;
   const fg = inFlight[0];
   if (fg) {
-    return html`<div class="live-strip working"><${Icon} name="running" className="spin" />
+    return html`<div class="live-strip working"><${Icon} name="running" className="busy" />
       <span>${tr('正在执行')} <b>${fg.name}</b> <code class="ellipsis">${fg.summary}</code></span><span class="clock"><${Ticker} from=${fg.ts * 1000} min=${(fg.elapsed || 0) * 1000} prefix=${tr('已运行 ')} /></span></div>`;
   }
   if (session === 'idle' && bg.length) {
@@ -327,7 +327,7 @@ export function LiveStrip({ run, inFlight, bg, session, killed, t }) {
       <span>${tr('等待中：')}${next || html`${tr('后台命令')} <code class="ellipsis" title=${cmd}>${cmd}</code>`}<span class="muted">${next ? tr('（后台命令：{cmd}；结束后自动开始新一轮，等待期间不消耗 token）', { cmd }) : tr('（结束后自动开始新一轮，等待期间不消耗 token）')}</span></span>
       <span class="clock"><${Ticker} from=${Date.parse(t.since) || Date.now()} prefix=${tr('已等待 ')} /></span></div>`;
   }
-  return html`<div class="live-strip working"><${Icon} name="running" className="spin" /><span>${tr('agent 正在思考或输出')}</span>
+  return html`<div class="live-strip working"><${Icon} name="running" className="busy" /><span>${tr('agent 正在思考或输出')}</span>
     <span class="clock"><${Ticker} from=${Date.parse(run.started)} prefix=${tr('本次运行 ')} /></span></div>`;
 }
 
@@ -362,7 +362,7 @@ function Item({ it, load }) {
         : running ? html`<${Ticker} from=${it.ts * 1000} min=${(it.elapsed || 0) * 1000} prefix=${tr('已运行 ')} />` : duration((it.ended - it.ts) * 1000);
     return html`<div class=${`item tool ${it.error ? 'error' : ''}`}>
       <button class="line-btn" aria-expanded=${open} onClick=${() => setOpen(!open)}>
-        <${Icon} name="chevron" className=${open ? 'rot90' : ''} /><${Icon} name=${status} className=${status === 'running' ? 'spin' : ''} />
+        <${Icon} name="chevron" className=${open ? 'rot90' : ''} /><${Icon} name=${status} className=${status === 'running' ? 'busy' : ''} />
         <b>${it.name}</b>${it.background ? html`<span class="tag">${tr('后台')}</span>` : ''}<code class="ellipsis">${it.summary}</code>
         <span class="muted nowrap">${time}</span>${tag}</button>
       ${open && html`<div class="tool-body">${more}

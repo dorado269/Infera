@@ -28,17 +28,51 @@ export function moveLane(all, shown, from, to) {
   return all.map((id) => (shown.includes(id) ? moved[i++] : id));
 }
 
-// Rows follow the tasks' start times (creation time if not started), top to bottom; each lane is a
-// column. A task goes on the current row unless its lane is taken there, it starts on a later day,
-// or it is linked to a task on that row, so every edge spans rows. Drafts have no start: they get
-// their own rows at the bottom (the draft band). An edge from a task that started later points up.
+// The order the tasks run in: each task with its time, the start, or for one not started yet its creation but no
+// earlier than its upstream tasks' times (it cannot start before them), so a task never comes before the tasks it
+// waits for. Equal times (a template's tasks are made at once) go by how deep the task is in the graph, then by lane.
+// Drafts ("~…") come after every date. Returns {order: [task], when: (id) => time}.
+export function runOrder(tasks, edges, laneIds) {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const ups = new Map();
+  for (const e of edges) if (e.from !== e.to && byId.has(e.from) && byId.has(e.to)) ups.set(e.to, [...(ups.get(e.to) || []), e.from]);
+  const memo = (f) => {  // f(id, rec) over the upstream tasks; a cycle is cut where it closes
+    const done = new Map(), open = new Set();
+    const rec = (id) => {
+      if (done.has(id)) return done.get(id);
+      if (open.has(id)) return null;
+      open.add(id);
+      const v = f(id, rec);
+      open.delete(id);
+      done.set(id, v);
+      return v;
+    };
+    return rec;
+  };
+  const when = memo((id, rec) => {
+    const t = byId.get(id), draft = t.status === 'draft';
+    let k = t.started || t.created || '';
+    // a task that is not a draft does not wait for a draft's time
+    if (!t.started) for (const u of ups.get(id) || []) if (draft || byId.get(u).status !== 'draft') k = [k, (rec(u) || '').replace(/^~/, '')].sort()[1];
+    return draft ? `~${k}` : k;
+  });
+  const depth = memo((id, rec) => Math.max(-1, ...(ups.get(id) || []).map((u) => rec(u) ?? -1)) + 1);
+  const cmp = (a, b) => (a > b) - (a < b);
+  const order = [...tasks].sort((a, b) => cmp(when(a.id), when(b.id)) || depth(a.id) - depth(b.id)
+    || laneIds.indexOf(a.type) - laneIds.indexOf(b.type) || cmp(a.id, b.id));
+  return { order, when };
+}
+
+// Rows follow runOrder, top to bottom; each lane is a column: the first task top left, the last bottom right. A task
+// goes on the current row unless its lane is taken there, its time is on a later day, or it is linked to a task on that
+// row, so every edge spans rows. Drafts have no start: they get their own rows at the bottom (the draft band). An edge
+// from a task that started later points up. edges: all of them, also the kinds the board hides, so hiding a kind does
+// not move the cards.
 export function layout(tasks, edges, laneIds, compact) {
-  const key = (t) => (t.status === 'draft' ? `~${t.created}` : t.started || t.created || '');
-  const cmp = (a, b) => (a > b) - (a < b);  // plain order: drafts ("~…") after every date
-  const order = [...tasks].sort((a, b) => cmp(key(a), key(b)) || cmp(a.id, b.id));
+  const { order, when } = runOrder(tasks, edges, laneIds);
   const layer = new Map(), laneRow = new Map(), rows = [];  // rows[i]: {day, draft}
   for (const t of order) {
-    const row = rows.length - 1, draft = t.status === 'draft', day = draft ? '草稿' : dayOf(t.started || t.created);  // i18n: not shown (the drafts band has no day label)
+    const row = rows.length - 1, draft = t.status === 'draft', day = draft ? '草稿' : dayOf(when(t.id));  // i18n: not shown (the drafts band has no day label)
     const linked = edges.some((e) => (e.to === t.id && layer.get(e.from) === row) || (e.from === t.id && layer.get(e.to) === row));
     const l = row < 0 || day !== rows[row].day || laneRow.get(t.type) === row || linked ? row + 1 : row;
     if (l > row) rows.push({ day, draft });
@@ -224,6 +258,7 @@ export function BoardPage({ pid, onNewTask }) {
           title=${project.archived ? tr('项目已归档，取消归档后才能新建任务') : tr('新建任务（快捷键 n）')}><${Icon} name="plus" />${tr('新建任务')}</button>
       </div>
     </header>
+    ${project.template_review && !project.archived && html`<${TemplateReview} pid=${pid} project=${project} types=${types} tasks=${tasks} edges=${edges} />`}
     ${machines.length > 0 && html`<${MachineStrip} machines=${machines} pid=${pid} />`}
     ${tasks.length > 0 && html`<${Attention} pid=${pid} tasks=${tasks} titleOf=${titleOf} />`}
     <${Toolbar} view=${v} set=${set} types=${types} tasks=${tasks} collapse=${collapse} />
@@ -232,6 +267,33 @@ export function BoardPage({ pid, onNewTask }) {
     <${TaskTable} pid=${pid} tasks=${tasks} edges=${edges} view=${v} titleOf=${titleOf} selected=${selected}
       tagUnmanaged=${tasks.some((t) => t.managed)} />
   </main>`;
+}
+
+// A project made from a template that brings tasks waits for you (project.yaml template_review): the tasks are listed in
+// the order they will run, to open and review (and edit) one by one, with the project's rules and settings; 开始运行 lets
+// them start as in any other project. Starting one of them by hand does the same.
+function TemplateReview({ pid, project, types, tasks, edges }) {
+  const [busy, setBusy] = useState(false);
+  const queued = runOrder(tasks.filter((t) => t.managed && t.status === 'queued'), edges, types.map((ty) => ty.id)).order;
+  const first = queued.filter((t) => t.detail?.kind === 'template_review');
+  const start = async () => {
+    if (!await confirmDialog({ title: tr('开始运行「{title}」？', { title: project.title }), ok: tr('开始运行'),
+      body: html`<p>${project.autorun ? tr('{tasks} 将立即开始，其余任务在上游完成后自动开始。', { tasks: first.map((t) => t.title).join(tr('、')) })
+        : tr('自动开始已关闭：开始运行后，任务仍需在各自的详情里手动开始。')}</p>` })) return;
+    setBusy(true);
+    api.post(`/api/projects/${pid}/start`).then(() => toast(tr('已开始运行：{title}', { title: project.title })),
+      (e) => toast(e.message, { error: true })).finally(() => setBusy(false));
+  };
+  return html`<section class="template-review" aria-labelledby="h-template-review">
+    <div class="tr-head"><${Icon} name="in_review" /><h2 id="h-template-review">${tr('待审核模板：{n} 个任务尚未开始', { n: queued.length })}</h2>
+      <span class="spacer"></span>
+      <a class="btn small ghost" href=${`#/p/${pid}/rules`}>${tr('项目规则')}</a>
+      <a class="btn small ghost" href=${`#/p/${pid}/settings`}>${tr('项目设置')}</a>
+      <button class="btn primary" onClick=${start} disabled=${busy}><${Icon} name="play" />${tr('开始运行')}</button></div>
+    <p class="small">${tr('这些任务由模板 {template} 预置，在你审核之前不会开始。请按顺序打开每个任务，检查 prompt、依赖、机器和验收检查（可以直接修改），再看一遍项目规则和设置（目标、机器）。确认后点"开始运行"，或在某个任务的详情里点"开始"；之后的任务按依赖自动推进。', { template: project.template || '' })}</p>
+    <ol class="tr-tasks">${queued.map((t) => html`<li><a href=${taskHref(pid, t.id, { tab: 'task' })}><b>${t.title}</b><span class="mono small muted">${t.id}</span></a>
+      ${first.includes(t) && html`<span class="tag tr-first">${tr('第一个开始')}</span>`}</li>`)}</ol>
+  </section>`;
 }
 
 function AutorunSwitch({ project }) {
@@ -300,7 +362,7 @@ function Attention({ pid, tasks, titleOf }) {
         ${unread.length > 0 && html`<h3><${Icon} name="unread" />${tr('最近完成 {n}（未查看，不阻塞下游）', { n: unread.length })}<${MarkAllRead} tasks=${unread} /></h3>
           ${list(unread.map((t) => item(t, t.report ? tr('报告：{report}', { report: t.report }) : '', ago(t.since, now))), '')}`}
       </div>
-      <div class="att-panel"><h2><${Icon} name="running" className="spin" />${tr('运行中 {n}', { n: running.length })}${queued.length ? html`<span class="muted">${tr('（待开始 {n}）', { n: queued.length })}</span>` : ''}</h2>
+      <div class="att-panel"><h2><${Icon} name="running" className="busy" />${tr('运行中 {n}', { n: running.length })}${queued.length ? html`<span class="muted">${tr('（待开始 {n}）', { n: queued.length })}</span>` : ''}</h2>
         ${list([...running.map((t) => item(t, statusLine(t, titleOf), since(t.since, now))),
           ...queued.map((t) => item(t, statusLine(t, titleOf)))], tr('暂无运行中的任务'))}
       </div>
@@ -425,7 +487,7 @@ function Canvas({ pid, types, tasks, edges, view, selected, collapse, byId, onNe
   const { shown, compact, hidden } = useMemo(() => visibleTasks(tasks, edges, view, collapse, Date.now()), [tasks, edges, view, collapse]);
   const shownIds = new Set(shown.map((t) => t.id));
   const visEdges = edges.filter((e) => view.kinds.has(e.kind) && shownIds.has(e.from) && shownIds.has(e.to));
-  const L = useMemo(() => layout(shown, visEdges, laneIds, compact), [shown, visEdges.length, laneIds.join(), compact]);
+  const L = useMemo(() => layout(shown, edges, laneIds, compact), [shown, edges, laneIds.join(), compact]);
   const ds = edgePaths(visEdges, L.pos);
   const lin = selected && byId.has(selected) ? lineage(selected, visEdges) : null;
   const related = (id) => !lin || id === selected || lin.up.has(id) || lin.down.has(id);

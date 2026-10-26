@@ -3,7 +3,7 @@ longest waiting first, as long as their project and agent_sys as a whole have a 
 (server.Store.poll): with no server nothing is scheduled, and a restarted server goes on from the files.
 
 Why a queued task waits, the first reason that holds (shown on its card):
-  项目已归档 > 阻塞类上游未完成 > 已关闭自动开始                              scan.derive_details: the project alone
+  项目已归档 > 阻塞类上游未完成 > 等子任务 > 等你审核模板 > 已关闭自动开始      scan.derive_details: the project alone
   > 机器被占用 (machines, with their holders)                             plan(): across projects
   > 项目名额已满 > 全局名额已满 (concurrency, with scope and limit)
 A running task holds a slot, also while it waits in the background or is taken over in a terminal; an unmanaged one

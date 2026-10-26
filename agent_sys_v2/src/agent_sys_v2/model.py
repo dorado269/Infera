@@ -606,6 +606,12 @@ class Project:
         return bool(self.config.get("archived_at"))
 
     @property
+    def template_review(self):
+        """The tasks the template brought wait for you to review them: nothing starts by itself until you start the
+        project or one of its tasks (ops.start_project)."""
+        return self.config.get("template_review") is True
+
+    @property
     def max_running(self):
         return positive(self.config.get("max_running"), PROJECT_DEFAULTS["max_running"])
 
@@ -686,6 +692,7 @@ class Project:
             "max_running": self.max_running,
             "archived": self.archived,
             "archived_at": plain(self.config.get("archived_at")),
+            "template_review": self.template_review,
             "goal": str(plain(self.config.get("goal")) or ""),
             "ledger": self.ledger,
             "agent": {**PROJECT_DEFAULTS["agent"], **plain(self.config.get("agent") or {})},

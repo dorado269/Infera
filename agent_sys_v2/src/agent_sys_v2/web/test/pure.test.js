@@ -42,6 +42,27 @@ test('layout: lanes are columns, start days are rows, drafts go to the band at t
   assert.deepEqual(L.rows.map((r) => r.draft), [false, false, false, true]);
 });
 
+test('layout: a template\'s first round runs from the top left to the bottom right, whatever the times say', () => {
+  // made at once (one creation time); intake started a few seconds later, the rest wait for it
+  const made = '2026-10-26T05:52:34Z';
+  const tasks = ['plan/r1', 'profile/r1', 'baseline/r1', 'survey/r1'].map((id) => task(id, 'queued', '', { created: made }))
+    .concat(task('intake/r1', 'needs_you', '2026-10-26T05:52:37Z', { created: made }));
+  const edges = [['intake/r1', 'survey/r1'], ['intake/r1', 'baseline/r1'], ['baseline/r1', 'profile/r1'], ['profile/r1', 'plan/r1'],
+    ['survey/r1', 'plan/r1'], ['intake/r1', 'plan/r1']].map(([from, to]) => ({ from, to, kind: 'input' }));
+  const lanes = ['intake', 'survey', 'baseline', 'profile', 'plan'];
+  const L = layout(tasks, edges, lanes, new Set());
+  const row = (id) => L.pos.get(id).layer;
+  assert.deepEqual(lanes.map((l) => row(`${l}/r1`)), [0, 1, 1, 2, 3]);
+  assert.ok(lanes.every((l, i) => !i || L.pos.get(`${l}/r1`).x > L.pos.get(`${lanes[i - 1]}/r1`).x));
+  // a cycle does not hang the layout
+  const loop = layout(tasks, [...edges, { from: 'plan/r1', to: 'intake/r1', kind: 'input' }], lanes, new Set());
+  assert.equal(loop.pos.size, 5);
+  // a task that started before its upstream (re-run upstream) keeps its own time: the edge points up
+  const rerun = [task('a/x', 'done', '2026-10-21T01:00:00Z'), task('b/y', 'done', '2026-10-20T01:00:00Z')];
+  const R = layout(rerun, [{ from: 'a/x', to: 'b/y', kind: 'input' }], ['a', 'b'], new Set());
+  assert.ok(R.pos.get('b/y').layer < R.pos.get('a/x').layer);
+});
+
 test('edgePaths: one SVG path per edge, from the upstream card to the downstream card', () => {
   const tasks = [task('develop/a', 'done', '2026-10-20T01:00:00Z'), task('develop/b', 'running', '2026-10-21T01:00:00Z'),
     task('develop/c', 'queued', '2026-10-22T01:00:00Z')];

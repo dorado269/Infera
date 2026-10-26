@@ -62,13 +62,14 @@ campaigns/<c>/repos/                                  agent 要改的代码（�
 
 1. 新建 campaign：在首页**新建项目**，模板选 **Infera 性能优化**（`infera-perf`）；或者用命令行 `agent-sys-v2 new glm52-agentx --template infera-perf --title "GLM-5.2 4P4D AgentX"`。
    模板自带第 1 轮的 5 个任务，建项目时就排好队：`intake/r1` → `survey/r1` ∥ `baseline/r1` → `profile/r1` → `plan/r1`。再把 Infera clone 到 `campaigns/<c>/repos/Infera`：agent 在 campaign 目录下工作，skills 里引用的是 `repos/Infera/examples/<kit>`。
-2. `intake/r1` 立即开始：先预调研（权重、InferenceX、节点），再给你一张预填好的问卷（**回答 N 个问题**；没填的行按建议处理）。拿到回答后它写好 campaign 的 `rules/project.md`、`project.yaml` 的目标、机器和工作点，出一页 brief 等你审核。审核通过前下游一律不开始。
-3. 对标调研（InferenceX 参考曲线，不占 GPU）和基线（v0 曲线、噪声、快速验证标定）并行，然后是 profile（从便宜的层做起，产出 `candidates.yaml`，需要你审核）。
+2. 这时还不会开始：看板顶部显示**待审核模板**，按执行顺序列出这 5 个任务。逐个打开，检查（可以直接修改）prompt、机器和验收检查，再看一遍项目规则和设置；确认后点**开始运行**（或者在某个任务里点**开始**）。之后的任务按依赖自动推进。
+3. `intake/r1` 开始：先预调研（权重、InferenceX、节点），再给你一张预填好的问卷（**回答 N 个问题**；没填的行按建议处理）。拿到回答后它写好 campaign 的 `rules/project.md`、`project.yaml` 的目标、机器和工作点，出一页 brief 等你审核。审核通过前下游一律不开始。
+4. 对标调研（InferenceX 参考曲线，不占 GPU）和基线（v0 曲线、噪声、快速验证标定）并行，然后是 profile（从便宜的层做起，产出 `candidates.yaml`，需要你审核）。
    - 在**运行输出**里看进展；用底部输入框给 agent 发消息，运行中也可以；需要时点**停止**，或**在终端中接管**。
-4. `plan/r1` 给候选排序、分配本轮的 GPU 预算和机器，起草实验子任务和 `close/r1`。审核通过后在它的详情里点**全部纳入托管**，实验和收尾任务一起排队。
+5. `plan/r1` 给候选排序、分配本轮的 GPU 预算和机器，起草实验子任务和 `close/r1`。审核通过后在它的详情里点**全部纳入托管**，实验和收尾任务一起排队。
    - 每个实验占用自己的机器，其他任务等机器空出来再开始；
    - `close/r1` 用 `kind: children` 依赖等 plan 的子任务全部完成或取消，再集成本轮接受的改动、测整条曲线，比 v0 好就封版 v1，并起草下一轮的 `intake/r2`（带建议的增量问卷）。
-5. **台账**页把每个系列画成 Y–X 曲线（我们的、基线、对标），给出各系列在工作点的值和 Δ。agent 说完成了但验收检查没过的任务，会出现在**待确认**里，附带检查的输出。
+6. **台账**页把每个系列画成 Y–X 曲线（我们的、基线、对标），给出各系列在工作点的值和 Δ。agent 说完成了但验收检查没过的任务，会出现在**待确认**里，附带检查的输出。
 
 任务文件示例，标出了 v2 新增的字段（`depends_on` 的 kind：`input`、`code` 等上游完成，`children` 等上游和它的全部子任务完成；`review`、`subtask` 不阻塞）：
 

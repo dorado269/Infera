@@ -29,6 +29,7 @@ def main(home):
     shutil.rmtree(home, ignore_errors=True)
     ops.init_home(home)
     pdir = ops.new_project(home, "glm52-agentx", "infera-perf", title="GLM-5.2 4P4D AgentX")
+    ops.start_project(pdir)  # the template's tasks reviewed: round one is under way
     cfg = (pdir / "project.yaml").read_text(encoding="utf-8")
     cfg = cfg.replace('goal: ""', 'goal: "P90 interactivity ≥ 40 下的输入 tok/s/GPU +10%"')
     cfg = cfg.replace(

@@ -26,7 +26,7 @@
     : 'Browser: ' + navigator.userAgent + '\nagent_sys needs a recent browser (Chrome / Edge 80+, Firefox 98+, Safari 15.4+). Include the above when reporting the problem.';
   if (zh) {  // index.html's "loading" line is in English; the app replaces it once it starts
     document.addEventListener('DOMContentLoaded', function () {
-      var line = document.querySelector('#app .boot');
+      var line = document.querySelector('#app .boot p');
       if (line) line.textContent = 'agent_sys 正在加载…';
     });
   }

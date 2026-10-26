@@ -73,19 +73,22 @@ campaigns/<c>/repos/                                  code the agents work on (n
    The template comes with round one queued: `intake/r1` → `survey/r1` ∥ `baseline/r1` → `profile/r1` → `plan/r1`.
    Clone Infera into `campaigns/<c>/repos/Infera`: the agents work from the campaign directory and the skills refer
    to `repos/Infera/examples/<kit>`.
-2. `intake/r1` starts at once: it looks around (weights, InferenceX, the nodes) and asks you a prefilled
+2. Nothing starts yet: the board shows **Template to review** with the five tasks in the order they run. Open each,
+   check (and edit) its prompt, machines and checks, and look over the project's rules and settings; then **Start
+   project** (or **Start** one task by hand). From then on the tasks follow their dependencies.
+3. `intake/r1` starts: it looks around (weights, InferenceX, the nodes) and asks you a prefilled
    questionnaire (**Answer N questions**; a row you leave empty takes its suggestion). With your answers it writes the
    campaign's `rules/project.md`, the goal, machines and working point in `project.yaml`, and a one-page brief you
    approve. Nothing downstream starts before that.
-3. The survey (InferenceX reference curves, no GPU) and the baseline (the v0 curve, noise, calibration) run, then
+4. The survey (InferenceX reference curves, no GPU) and the baseline (the v0 curve, noise, calibration) run, then
    the profile (cheap layers first, `candidates.yaml`; you approve it). Follow a task in **Run output**; write to
    the agent in the box at the bottom (even while it runs); **Stop**; **Take over in terminal**.
-4. `plan/r1` ranks the candidates, splits the round's GPU budget over the machines and drafts the experiments
+5. `plan/r1` ranks the candidates, splits the round's GPU budget over the machines and drafts the experiments
    (subtasks) and `close/r1`. Approve the plan, then **Join them all** in its drawer: the experiments and the close
    are queued together. Each experiment holds its machines; the close waits (`kind: children`) until the plan's
    every subtask is done or cancelled, integrates what was accepted, measures the curve, seals v1 if it beats v0,
    and drafts `intake/r2`: the next round's questionnaire, prefilled with its advice.
-5. The **Ledger** tab draws every series as a Y–X curve (ours, the baseline, the references) with its value at the
+6. The **Ledger** tab draws every series as a Y–X curve (ours, the baseline, the references) with its value at the
    working point. A task that is done but fails its checks comes back to you under **Needs you** with their output.
 
 A task file, with what agent_sys v2 adds (`depends_on` kinds: `input` and `code` wait for the upstream to be done,
@@ -149,8 +152,8 @@ ruff format --check . && ruff check .            # the repository's settings
 
 - *the socket's directory can be entered by other users*: point `--sock` at a directory only you can enter.
 - *already has a server running*: one server per `AGENT_SYS_HOME` (two schedulers would start a task twice).
-- A queued task that does not start says why on its card: upstream tasks, machines held by another task, slots, or
-  auto start switched off.
+- A queued task that does not start says why on its card: upstream tasks, a template waiting for your review
+  (**Start project** on the board), machines held by another task, slots, or auto start switched off.
 - Runs use `~/.claude/settings.json`; the server drops `CLAUDE*` / `ANTHROPIC*` variables from the shell it was
   started in, so a server started inside a Claude Code session still uses your settings.
 - The v1 runtime also reads `AGENT_SYS_HOME` (as its state prefix); if you set it for v1, v2 makes its directories

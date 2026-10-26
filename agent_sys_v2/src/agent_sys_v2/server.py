@@ -423,6 +423,12 @@ def create_app(home):
         store.write(ops.set_archived, store.project(pid).path, False)
         return project_json(store, pid)
 
+    @app.post("/api/projects/{pid}/start")
+    def start_project(pid: str):
+        """开始运行: the template's tasks are reviewed; they start as any other project's do."""
+        store.write(ops.start_project, store.project(pid).path)
+        return project_json(store, pid)
+
     @app.get("/api/projects/{pid}/board")
     def board(pid: str):
         return board_json(store, store.project(pid))
@@ -549,6 +555,9 @@ def create_app(home):
                 with store.lock:
                     machines.check_free(store.live(), p, t)
             store.write(getattr(runs, action), home, p.path, t.id, also=also)
+            # the first start by hand ends the template's review
+            if action == "start" and p.template_review:
+                store.write(ops.start_project, p.path)
         elif action == "join_children":
             out["joined"] = store.write(
                 ops.join_children, p.path, t.id, also=[(pid, c.id) for c in p.tasks.values()]

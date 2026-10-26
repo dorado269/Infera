@@ -596,6 +596,17 @@ def set_archived(pdir, archived):
     return load_project(pdir)
 
 
+def start_project(pdir):
+    """开始运行: the template's tasks are reviewed, template_review leaves project.yaml and the project runs as any
+    other (autorun on: the first task starts at once, the others as their upstream tasks are done). Starting one of
+    its tasks by hand does the same."""
+    project = load_project(pdir)
+    check_not_archived(project)
+    if project.template_review:
+        edit_yaml(project.path / "project.yaml", lambda config: config.pop("template_review", None))
+    return load_project(pdir)
+
+
 def settings(home, pid=None):
     """agent_sys.yaml and project.yaml with defaults filled in. Without a project, the
     defaults of every project are listed too (the global settings page shows them)."""
@@ -721,8 +732,9 @@ def new_project(home, name, template="blank", title=None, templates_dir=TEMPLATE
     """New project = copy the template's rules/, knowledge/, task_types/, skills/ + project.yaml with the
     title filled in + tasks/<type>/ for every type. The tasks the template brings (tasks/<type>/<name>.md, e.g. the
     first round of a campaign) are copied too and queued, each with a state.json of its own: their depends_on keeps
-    all but the first waiting. The agent_sys protocol is not copied: M2 injects it from the code at every run, so
-    that it follows agent_sys's version.
+    all but the first waiting. They do not start by themselves yet: project.yaml gets template_review: true, so you
+    review them (and the rules) first and start the project by hand (start_project). The agent_sys protocol is not
+    copied: M2 injects it from the code at every run, so that it follows agent_sys's version.
     Built in a hidden directory and renamed into place, so a failure leaves nothing half made."""
     check_name(name, _("项目名"))
     templates_dir = Path(templates_dir)
@@ -750,13 +762,23 @@ def new_project(home, name, template="blank", title=None, templates_dir=TEMPLATE
         config.insert(0, "title", title or name)
     if "template" not in config:
         config.insert(1, "template", template)
+    if template_tasks(src):
+        config.insert(
+            2,
+            "template_review",
+            True,
+            comment=_(
+                "模板预置的任务等你审核；在看板上点「开始运行」或手动开始其中一个任务后，这一行自动删除"
+            ),
+        )
     write_text(tmp / "project.yaml", dump_yaml(config))
     for skeleton in (tmp / "task_types").glob("*.md"):
         (tmp / "tasks" / skeleton.stem).mkdir(parents=True)
     (tmp / "workspaces").mkdir()
+    made = now_iso()  # made at once: the board orders them by their dependencies alone
     for tid in template_tasks(src):
         (tmp / "tasks" / tid).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src / "tasks" / f"{tid}.md", tmp / "tasks" / f"{tid}.md")
-        write_state(tmp / "workspaces" / tid, new_state("queued"))
+        write_state(tmp / "workspaces" / tid, new_state("queued", created=made))
     tmp.rename(dst)
     return dst

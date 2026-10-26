@@ -333,6 +333,8 @@ def derive_details(project):
                     "tasks": [c for pending in children.values() for c in pending],
                 }
                 if children
+                else {"kind": "template_review"}
+                if project.template_review
                 else {"kind": "manual"}
                 if project.config.get("autorun", True) is False
                 else {}
@@ -454,7 +456,7 @@ def load_project(path):
             ),
             422,
         )
-    for key in ("autorun",):
+    for key in ("autorun", "template_review"):
         if config.get(key) is not None and not isinstance(config[key], bool):
             raise AgentSysError(
                 _(

@@ -36,6 +36,7 @@ export function statusLine(task, titleOf = (id) => id) {
     case 'queued:concurrency': return d.scope === 'global' ? t('等待运行名额（全局上限 {n} 个）', { n: d.limit })
       : t('等待运行名额（项目上限 {n} 个）', { n: d.limit });
     case 'queued:machines': return t('等待机器：{machines}', { machines: list((d.machines || []).map((m) => t('{name}（被 {task} 占用）', { name: m.name, task: m.title || m.task }))) });
+    case 'queued:template_review': return t('等待你审核模板：审核后在看板顶部点"开始运行"');
     case 'queued:manual': return t('已关闭自动开始，需手动开始');
     case 'queued:archived': return t('项目已归档，任务不会自动开始');
     case 'queued:': return t('上游已满足，等待调度');
@@ -163,8 +164,11 @@ export function joinPath(dir, rel) {
 // 16×16 line icons; each status has its own shape so state never depends on color alone.
 const PATHS = {
   queued: '<circle cx="8" cy="8" r="5.5"/>',
-  // a conch shell's spiral (the UI comes from conch): the "running" mark and the logo
-  running: '<path d="M8 8.2c0-.6.5-1 1-.9.9.1 1.3 1.1 1 1.9-.5 1.2-2 1.6-3.1 1-1.5-.8-1.8-2.8-.9-4.1 1.2-1.7 3.7-2 5.3-.7 1.9 1.6 2 4.6.3 6.4-2 2.1-5.6 2.1-7.6 0" />',
+  // an agent at work: a core with an arc that orbits it (style.css turns the arc while it works)
+  running: '<circle cx="8" cy="8" r="5.6" class="track"/><path class="orbit" d="M8 2.4a5.6 5.6 0 0 1 5.6 5.6"/><circle cx="8" cy="8" r="1.7" class="fill"/>',
+  // the logo: a tile with a line of tasks climbing, step by step, to a better point (also favicon.svg and index.html)
+  logo: '<rect x="1" y="1" width="14" height="14" rx="3.8" class="fill"/><path class="knock" d="M4.2 11.6 7.2 8.2 9.2 9.8 11.8 4.6"/>'
+    + '<circle cx="4.2" cy="11.6" r="1.1" class="knock-fill"/><circle cx="7.2" cy="8.2" r="1.1" class="knock-fill"/><circle cx="9.2" cy="9.8" r="1.1" class="knock-fill"/><circle cx="11.8" cy="4.6" r="1.25" class="knock-fill"/>',
   waiting: '<path d="M4.5 2.5h7M4.5 13.5h7M5.5 2.5c0 3 5 3.2 5 5.5s-5 2.5-5 5.5M10.5 2.5c0 3-5 3.2-5 5.5"/>',
   terminal: '<rect x="1.8" y="3" width="12.4" height="10" rx="1.6"/><path d="M4.6 6.4 6.8 8.3 4.6 10.2M8.3 10.3h3"/>',
   needs_you: '<circle cx="8" cy="8" r="6" class="fill"/><path d="M8 4.6v4.2" class="knock"/><circle cx="8" cy="11.1" r=".25" class="knock"/>',
@@ -182,6 +186,7 @@ const PATHS = {
   copy: '<rect x="5.5" y="5.5" width="7.5" height="7.5" rx="1.2"/><path d="M3 10.3V4.2C3 3.5 3.5 3 4.2 3h6"/>',
   chevron: '<path d="M6 3.8 10.2 8 6 12.2"/>',
   stop: '<rect x="4" y="4" width="8" height="8" rx="1.2" class="fill"/>',
+  play: '<path d="M5.2 3.4v9.2L12.6 8z" class="fill"/>',
   sun: '<circle cx="8" cy="8" r="2.8"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/>',
   moon: '<path d="M12.8 10.4A5.6 5.6 0 0 1 5.6 3.2a5.6 5.6 0 1 0 7.2 7.2z"/>',
   auto: '<circle cx="8" cy="8" r="5.6"/><path d="M8 2.4v11.2A5.6 5.6 0 0 0 8 2.4z" class="fill"/>',

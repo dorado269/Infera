@@ -324,6 +324,35 @@ def test_slots_through_the_server_and_a_manual_start(home):
         wait(client, "b", lambda t: t["status"] != "running")
 
 
+def test_a_templates_tasks_wait_for_your_review(tmp_path):
+    home = run_home(tmp_path, "template_review: true\n")
+    with TestClient(create_app(home)) as client:
+        new(client, "a")
+        new(client, "b", depends_on=["develop/a"])
+        time.sleep(2.5)
+        assert (get(client, "a")["status"], get(client, "a")["detail"]) == (
+            "queued",
+            {"kind": "template_review"},
+        )
+        assert get(client, "b")["detail"]["kind"] == "upstream"
+        assert ok(client.get("/api/projects"))[0]["template_review"] is True
+        # 开始运行: the project runs as any other, a starts by itself
+        assert ok(client.post("/api/projects/r/start"))["template_review"] is False
+        wait(client, "a", lambda t: t["status"] != "queued", 5)
+
+
+def test_starting_a_task_by_hand_ends_the_template_review(tmp_path):
+    home = run_home(tmp_path, "template_review: true\n")
+    with TestClient(create_app(home)) as client:
+        new(client, "a")
+        new(client, "b")
+        assert ok(client.post(f"{T}/a/actions/start"))["task"]["status"] == "running"
+        assert ok(client.get("/api/projects"))[0]["template_review"] is False
+        wait(
+            client, "b", lambda t: t["status"] != "queued", 5
+        )  # the others start by themselves from now on
+
+
 def test_archived_and_manual_projects_are_not_scheduled(client, home):
     ok(client.post("/api/projects/r/archive"))
     write_state(

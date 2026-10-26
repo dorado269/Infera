@@ -141,6 +141,14 @@ EN = {
     "语言应为 {languages}": "The language must be {languages}",
     "模板「{template}」不存在": 'Template "{template}" does not exist',
     "项目「{project}」已存在": 'Project "{project}" already exists',
+    "agent_sys: 模板带来的 {n} 个任务等你审核：在看板上检查后点「开始运行」，或手动开始其中一个任务": (
+        'agent_sys: the template brought {n} tasks for you to review: check them on the board, then click "Start '
+        'project", or start one of them by hand'
+    ),
+    "模板预置的任务等你审核；在看板上点「开始运行」或手动开始其中一个任务后，这一行自动删除": (
+        'the tasks the template brought wait for your review; this line goes once you click "Start project" on the '
+        "board or start one of the tasks by hand"
+    ),
     # ---- runs
     "无法在 tmux 中启动运行：{error}": "Cannot start the run in tmux: {error}",
     "agent.replay.writes 应为「工作区内的路径: 内容」的键值表，或者它们的列表": 'agent.replay.writes must be a mapping of "path in the workspace: content", or a list of them',

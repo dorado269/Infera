@@ -186,7 +186,7 @@ def test_join_keeps_what_a_draft_says_itself(make_project):
 # ---------------------------------------------------------------- tasks a template brings
 
 
-def test_a_template_brings_its_tasks_queued(tmp_path):
+def test_a_template_brings_its_tasks_queued_for_review(tmp_path):
     templates = tmp_path / "templates"
     shutil.copytree(ops.TEMPLATES / "_common", templates / "_common")
     src = templates / "t"
@@ -215,8 +215,25 @@ def test_a_template_brings_its_tasks_queued(tmp_path):
     }
     assert p.tasks["develop/second"].detail == {"kind": "upstream", "tasks": ["develop/first"]}
     assert len({t.state["session_id"] for t in p.tasks.values()}) == 3
+    assert len({t.created for t in p.tasks.values()}) == 1
     assert [s["name"] for s in skills.found(pdir / "skills")] == ["own"]
     assert not (pdir / "tasks/develop/.hidden.md").exists()
+    # nothing starts before you have reviewed them: the first task waits for you, not for a slot
+    assert p.template_review and p.to_json()["template_review"] is True
+    assert p.tasks["develop/first"].detail == {"kind": "template_review"}
+    assert sched.plan([p], 4) == []
+    p = ops.start_project(pdir)
+    assert not p.template_review and "template_review" not in (pdir / "project.yaml").read_text()
+    assert p.tasks["develop/first"].detail == {}
+    assert [t.id for _, t in sched.plan([p], 4)] == ["develop/first", "other/x"]
+    assert (
+        ops.start_project(pdir).tasks["develop/first"].detail == {}
+    )  # a second time: nothing to do
+    # a template without tasks has nothing to review
+    assert not load_project(ops.new_project(tmp_path / "home", "b", "blank")).template_review
+    ops.set_archived(pdir, True)
+    with pytest.raises(AgentSysError):
+        ops.start_project(pdir)
 
 
 def test_the_infera_perf_round_one(tmp_path):
@@ -233,7 +250,7 @@ def test_the_infera_perf_round_one(tmp_path):
         ("profile/r1", "plan/r1"),
         ("survey/r1", "plan/r1"),
     ]
-    assert p.tasks["intake/r1"].detail == {}
+    assert p.tasks["intake/r1"].detail == {"kind": "template_review"}
     assert {t.id for t in p.tasks.values() if t.review} == {"intake/r1", "profile/r1", "plan/r1"}
     assert p.tasks["intake/r1"].agent["model"] == "sonnet"
     # a preset task carries the checks of its type

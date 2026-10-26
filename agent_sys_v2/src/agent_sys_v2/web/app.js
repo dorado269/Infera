@@ -1,5 +1,5 @@
-// agent_sys web UI: routes, the app bar, the home page (everything that needs you, across projects) and
-// the settings / archived-projects pages. The board is in board.js, the ledger in ledger.js, the task drawer in
+// agent_sys web UI: routes, the app bar, the home page (projects, 新建任务 and what runs on top; below, everything that
+// needs you, across projects) and the settings / archived-projects pages. The board is in board.js, the ledger in ledger.js, the task drawer in
 // task.js, the rules and knowledge pages in knowledge.js.
 import { render } from './vendor/preact.module.js';
 import { useState, useEffect } from './vendor/hooks.module.js';
@@ -38,21 +38,25 @@ function App() {
   const page = m ? m[2] || 'board' : g ? g[1] : 'home';
   const [tp, ...rest] = (params.t || '').split('/');
   const openTask = params.t && rest.length === 2 ? { pid: tp, tid: rest.join('/') } : null;
-  const newTask = params.new && pid ? pid : null;
+  // ?new=1 on a project's pages, ?new=<project> on the home page (its 新建任务 box): the same drawer
+  const newTask = !params.new ? null : pid || (page === 'home' && home.data?.projects.some((p) => p.id === params.new) ? params.new : null);
+  useEffect(() => { if (pid) stored.set('agent_sys-project', pid); }, [pid]);
   useEffect(() => {
     const key = (ev) => {
       if (/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || ev.ctrlKey || ev.metaKey || ev.altKey) return;
       if (ev.key === 'n' && pid && !projectOf(home.data, pid)?.archived) { ev.preventDefault(); go(hrefWith({ new: 1, t: null, tab: null, file: null })); }
+      const hp = ev.key === 'n' && page === 'home' && home.data && homeProject(home.data.projects);
+      if (hp) { ev.preventDefault(); go(newTaskHref(hp)); }
       if (ev.key === 'g') { ev.preventDefault(); go('#/'); }
     };
     addEventListener('keydown', key);
     return () => removeEventListener('keydown', key);
-  }, [pid, home.data]);
+  }, [pid, page, home.data]);
   return html`<a class="skip" href="#main" onClick=${(e) => { e.preventDefault(); document.getElementById('main')?.focus(); }}>${t('跳转到主要内容')}</a>
     <${AppBar} home=${home.data} pid=${pid} page=${page} conn=${conn} />
     ${!conn && html`<div class="conn-banner" role="status"><${Icon} name="warning" />${t('实时连接已断开，正在重新连接。页面显示的是断开前的数据，重新连接后将自动刷新。')}</div>`}
     <div class=${`layout ${openTask || newTask ? 'with-drawer' : ''}`}>
-      ${page === 'home' && html`<${HomePage} home=${home} />`}
+      ${page === 'home' && html`<${HomePage} home=${home} drawerPid=${newTask} />`}
       ${page === 'board' && html`<${BoardPage} key=${pid} pid=${pid} onNewTask=${() => go(hrefWith({ new: 1, t: null, tab: null, file: null }))} />`}
       ${page === 'ledger' && html`<${LedgerPage} key=${pid} pid=${pid} />`}
       ${page === 'rules' && html`<${RulesPage} key=${pid} pid=${pid} />`}
@@ -70,7 +74,7 @@ function AppBar({ home, pid, page, conn }) {
   const n = home ? home.needs_you.length + home.in_review.length : 0;
   const nav = (key, label) => html`<a href=${`#/p/${pid}${key === 'board' ? '' : `/${key}`}`} aria-current=${page === key ? 'page' : undefined}>${label}</a>`;
   return html`<header class="appbar">
-    <a class="brand" href="#/" aria-label=${t('agent_sys 首页')}><${Icon} name="running" size=${22} /><span>agent_sys</span></a>
+    <a class="brand" href="#/" aria-label=${t('agent_sys 首页')}><${Icon} name="logo" size=${22} /><span>agent_sys</span></a>
     ${pid && html`<span class="crumb" aria-hidden="true">/</span><a class="crumb-project" href=${`#/p/${pid}`}>${project?.title || pid}</a>
       ${project?.archived && html`<span class="tag">${t('已归档')}</span>`}
       <nav class="tabs-nav" aria-label=${t('项目')}>${nav('board', t('看板'))}${nav('ledger', t('台账'))}${nav('rules', t('规则'))}${nav('knowledge', t('经验'))}${nav('settings', t('设置'))}</nav>`}
@@ -89,6 +93,14 @@ function AppBar({ home, pid, page, conn }) {
 // localStorage can be blocked (embedded browsers, strict privacy settings): then the theme is not remembered.
 // Dark is the default; 跟随系统 follows the system's.
 const stored = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* not remembered */ } } };
+
+// The project the home page's 新建任务 starts in: the one opened last (a project's pages, or picked in the box),
+// else the first of the list (the only one, often).
+const homeProject = (projects) => {
+  const ok = projects.filter((p) => !p.error);
+  return (ok.find((p) => p.id === stored.get('agent_sys-project')) || ok[0])?.id;
+};
+const newTaskHref = (pid) => hrefWith({ new: pid, t: null, tab: null, file: null, run: null });
 
 function ThemeToggle() {
   const [theme, set] = useState(stored.get('agent_sys-theme') || 'dark');
@@ -116,7 +128,7 @@ const Loading = () => html`<main id="main" tabIndex="-1" class="page"><div class
 
 // ---------------------------------------------------------------- home
 
-function HomePage({ home }) {
+function HomePage({ home, drawerPid }) {
   const { data, error, reload } = home;
   const now = useNow(30000);
   if (error && !data) return html`<main id="main" tabIndex="-1" class="page"><${ErrorBox} what=${t('加载首页')} error=${error} retry=${reload} /></main>`;
@@ -127,76 +139,130 @@ function HomePage({ home }) {
     <section class="welcome"><h1>${t('暂无项目')}</h1><p>${t('agent_sys 以项目为单位管理任务：每个项目对应 campaigns/ 下的一个目录，任务按类型分泳道显示。请先新建一个项目。')}</p>
       ${archived > 0 && html`<p class="muted">${t('另有 {n} 个已归档项目，', { n: archived })}<a href="#/archived">${t('查看已归档项目')}</a>${t('。')}</p>`}
       <${NewProject} templates=${data.templates} first /></section></main>`;
+  const queues = [
+    { key: 'needs', icon: 'needs_you', label: t('待确认'), n: data.needs_you.length, hint: t('agent 提问、运行中断或预算用尽时，任务会出现在这里。') },
+    { key: 'review', icon: 'in_review', label: t('待审核'), n: data.in_review.length, hint: t('设置了"完成后需审核"的任务完成后会出现在这里，审核通过后下游任务才会开始。') },
+    { key: 'unread', icon: 'done', label: t('最近完成'), n: data.unread.length, hint: t('完成后还没查看的任务，查看后移出列表。') },
+  ];
+  const quiet = queues.filter((q) => !q.n);
+  // an empty queue is a chip in one line (its hint as the tooltip), not a heading over a sentence
+  const chips = html`<span class="quiet-chips">${quiet.map((q) => html`<span class=${`quiet-chip qc-${q.key}`} title=${q.hint}>
+    <${Icon} name=${q.icon} />${q.label} <span class="count">0</span></span>`)}</span>`;
   return html`<main id="main" tabIndex="-1" class="page home">
+    <h1 class="sr-only">${t('agent_sys 首页')}</h1>
     ${error && html`<${ErrorBox} what=${t('刷新首页')} error=${error} retry=${reload} />`}
-    <div class="home-grid">
-      <div class="home-main">
-        <section class="queue" aria-labelledby="h-needs">
-          <div class="section-head"><h1 id="h-needs"><${Icon} name="needs_you" />${t('待确认')} <span class="count">${data.needs_you.length}</span></h1>
+    <div class="home-top">
+      <${ProjectsCard} data=${data} />
+      <${NewTaskCard} projects=${data.projects} drawerPid=${drawerPid} />
+      <${RunningSummary} data=${data} now=${now} />
+    </div>
+    ${data.machines.length > 0 && html`<${HeldMachines} machines=${data.machines} now=${now} />`}
+    <div class="home-queues">
+      ${quiet.length === queues.length ? html`<div class="queues-quiet" role="status"><${Icon} name="done" className="quiet-ok" />
+          <b>${t('暂无待处理事项')}</b><span class="muted small">${t('需要你回复、审核或查看的任务会出现在这里。')}</span>${chips}</div>`
+        : html`
+        ${data.needs_you.length > 0 && html`<section class="queue" aria-labelledby="h-needs">
+          <div class="section-head"><h2 id="h-needs"><${Icon} name="needs_you" />${t('待确认')} <span class="count">${data.needs_you.length}</span></h2>
             ${interrupted.length >= 2 && html`<button class="btn primary" onClick=${() => resumeAll(interrupted)}>
               ${t('继续全部中断任务（{n}）', { n: interrupted.length })}</button>`}</div>
-          ${data.needs_you.length ? data.needs_you.map((x) => html`<${NeedsCard} key=${x.project + x.id} t=${x} now=${now} />`)
-            : html`<p class="empty-line">${t('暂无待确认的事项。agent 提问、运行中断或预算用尽时，任务会出现在这里。')}</p>`}
-        </section>
-        <section class="queue" aria-labelledby="h-review">
+          ${data.needs_you.map((x) => html`<${NeedsCard} key=${x.project + x.id} t=${x} now=${now} />`)}
+        </section>`}
+        ${data.in_review.length > 0 && html`<section class="queue" aria-labelledby="h-review">
           <div class="section-head"><h2 id="h-review"><${Icon} name="in_review" />${t('待审核')} <span class="count">${data.in_review.length}</span></h2></div>
-          ${data.in_review.length ? data.in_review.map((x) => html`<${ReviewCard} key=${x.project + x.id} t=${x} now=${now} />`)
-            : html`<p class="empty-line">${t('暂无待审核的任务。设置了"完成后需审核"的任务完成后会出现在这里，审核通过后下游任务才会开始。')}</p>`}
-        </section>
-        <section class="queue" aria-labelledby="h-unread">
+          ${data.in_review.map((x) => html`<${ReviewCard} key=${x.project + x.id} t=${x} now=${now} />`)}
+        </section>`}
+        ${data.unread.length > 0 && html`<section class="queue" aria-labelledby="h-unread">
           <div class="section-head"><h2 id="h-unread"><${Icon} name="done" />${t('最近完成')} <span class="count">${data.unread.length}</span><span class="muted small">${t('不阻塞下游，查看后移出列表')}</span></h2>
             <span class="spacer"></span><${MarkAllRead} tasks=${data.unread} /></div>
-          ${data.unread.length ? html`<ul class="unread-list">${data.unread.map((x) => html`<li>
+          <ul class="unread-list">${data.unread.map((x) => html`<li>
             <a href=${taskHref(x.project, x.id, { tab: 'docs' })}><${Icon} name="unread" className="unread-dot" /><b>${x.title}</b></a>
             <span class="muted small">${x.project} · ${ago(x.since, now)}</span><span class="ellipsis small">${x.last_message}</span>
-            <a class="btn small" href=${taskHref(x.project, x.id, { tab: 'docs' })}>${t('查看报告')}</a></li>`)}</ul>`
-            : html`<p class="empty-line">${t('暂无未查看的已完成任务。')}</p>`}
-        </section>
-      </div>
-      <aside class="home-side">
-        <${RunningSummary} data=${data} now=${now} />
-        ${data.machines.length > 0 && html`<${HeldMachines} machines=${data.machines} now=${now} />`}
-        <section class="side-card" aria-labelledby="h-projects">
-          <h2 id="h-projects">${t('项目列表')}</h2>
-          <ul class="projects">${data.projects.map((p) => p.error ? html`<li><b>${p.title}</b>
-            <span class="error-text small">${p.error}</span></li>` : html`<li>
-            <a href=${`#/p/${p.id}`}><b>${p.title}</b><span class="mono small muted">${p.id}</span></a>
-            <span class="counts small">
-              ${p.counts.needs_you > 0 && html`<span class="st-needs_you"><${Icon} name="needs_you" />${t('{n} 项待确认', { n: p.counts.needs_you })}</span>`}
-              ${p.counts.in_review > 0 && html`<span class="st-in_review"><${Icon} name="in_review" />${t('{n} 项待审核', { n: p.counts.in_review })}</span>`}
-              <span class="st-running"><${Icon} name="running" />${t('{n} 个运行中', { n: p.counts.running })}</span>
-              <span class="muted">${t('共 {n} 个任务，今日花费 {cost}', { n: p.counts.total, cost: money(p.cost_today_usd) })}</span>
-              <${ArchiveButton} project=${p} /></span></li>`)}</ul>
-          ${archived > 0 && html`<a class="archived-link small" href="#/archived"><${Icon} name="archive" />${t('已归档项目（{n}）', { n: archived })}</a>`}
-        </section>
-        <section class="side-card"><h2>${t('新建项目')}</h2><${NewProject} templates=${data.templates} /></section>
-      </aside>
+            <a class="btn small" href=${taskHref(x.project, x.id, { tab: 'docs' })}>${t('查看报告')}</a></li>`)}</ul>
+        </section>`}
+        ${quiet.length > 0 && html`<p class="queues-quiet small"><span class="muted">${t('其他队列暂无事项：')}</span>${chips}</p>`}`}
     </div>
   </main>`;
 }
 
+// The projects, one compact line each (scrolls past about six; a filter from nine on). 新建项目 is used seldom: it
+// takes the card's place behind a button in the card's head.
+function ProjectsCard({ data }) {
+  const [adding, setAdding] = useState(false);
+  const [q, setQ] = useState('');
+  const archived = data.archived_projects.length;
+  const shown = q ? data.projects.filter((p) => `${p.title} ${p.id}`.toLowerCase().includes(q.trim().toLowerCase())) : data.projects;
+  return html`<section class="side-card home-card projects-card" aria-labelledby="h-projects">
+    <div class="card-head"><h2 id="h-projects">${t('项目列表')} <span class="count">${data.projects.length}</span></h2><span class="spacer"></span>
+      ${!adding && data.projects.length > 8 && html`<input type="search" class="proj-filter" value=${q} onInput=${(e) => setQ(e.target.value)}
+        placeholder=${t('筛选项目')} aria-label=${t('筛选项目')} />`}
+      <button class="btn small ghost" aria-expanded=${adding} onClick=${() => setAdding(!adding)}>
+        <${Icon} name=${adding ? 'x' : 'plus'} />${adding ? t('取消') : t('新建项目')}</button></div>
+    ${adding ? html`<div class="card-body"><${NewProject} templates=${data.templates} first /></div>` : html`
+      <ul class="projects card-body">${shown.map((p) => p.error ? html`<li class="proj"><b class="ellipsis">${p.title}</b>
+          <span class="error-text small proj-sub">${p.error}</span></li>` : html`<li class="proj">
+        <a class="proj-name" href=${`#/p/${p.id}`}><b class="ellipsis">${p.title}</b>${p.title !== p.id && html`<span class="mono small muted ellipsis">${p.id}</span>`}</a>
+        <span class="proj-sub counts small">
+          ${p.template_review && html`<a class="st-in_review" href=${`#/p/${p.id}`} title=${t('模板预置的任务等你审核后才开始')}><${Icon} name="in_review" />${t('待审核模板')}</a>`}
+          ${p.counts.needs_you > 0 && html`<span class="st-needs_you"><${Icon} name="needs_you" />${t('{n} 项待确认', { n: p.counts.needs_you })}</span>`}
+          ${p.counts.in_review > 0 && html`<span class="st-in_review"><${Icon} name="in_review" />${t('{n} 项待审核', { n: p.counts.in_review })}</span>`}
+          ${p.counts.running > 0 && html`<span class="st-running"><${Icon} name="running" />${t('{n} 个运行中', { n: p.counts.running })}</span>`}
+          <span class="muted">${t('共 {n} 个任务，今日花费 {cost}', { n: p.counts.total, cost: money(p.cost_today_usd) })}</span></span>
+        <span class="proj-actions"><${ArchiveButton} project=${p} /><a class="btn small icon-only ghost" href=${newTaskHref(p.id)}
+          onClick=${() => stored.set('agent_sys-project', p.id)} title=${t('在 {project} 中新建任务', { project: p.title })}
+          aria-label=${t('在 {project} 中新建任务', { project: p.title })}><${Icon} name="plus" /></a></span></li>`)}
+        ${!shown.length && html`<li class="empty-line">${t('没有匹配的项目。')}</li>`}</ul>
+      ${archived > 0 && html`<a class="archived-link small" href="#/archived"><${Icon} name="archive" />${t('已归档项目（{n}）', { n: archived })}</a>`}`}
+  </section>`;
+}
+
+// 新建任务 from the home page: pick a project (the one opened last), then its NewTaskDrawer opens over this page.
+// While the drawer is open the box shows its project; picking another one moves the drawer there.
+function NewTaskCard({ projects, drawerPid }) {
+  const ok = projects.filter((p) => !p.error);
+  const [pick, setPick] = useState(() => homeProject(projects));
+  useEffect(() => { if (drawerPid) setPick(drawerPid); }, [drawerPid]);
+  const p = ok.find((x) => x.id === (drawerPid || pick)) || ok.find((x) => x.id === homeProject(projects));
+  const choose = (id) => { setPick(id); stored.set('agent_sys-project', id); if (drawerPid) go(newTaskHref(id)); };
+  return html`<section class="side-card home-card new-task-card" aria-labelledby="h-new-task">
+    <div class="card-head"><h2 id="h-new-task"><${Icon} name="plus" />${t('新建任务')}</h2></div>
+    <label class="field">${t('项目')}<select value=${p?.id} onChange=${(e) => choose(e.target.value)} disabled=${!ok.length}>
+      ${ok.map((x) => html`<option value=${x.id}>${x.title === x.id ? x.id : `${x.title} (${x.id})`}</option>`)}</select></label>
+    ${p && html`<div class="muted small nt-defaults">
+      <div class="nt-flags"><span>${p.template ? t('模板 {template}', { template: p.template }) : t('无模板')}</span><span>${p.autorun ? t('自动开始：开启') : t('自动开始：关闭')}</span>
+        ${p.template_review && html`<span class="st-in_review">${t('待审核模板')}</span>`}</div>
+      <div>${t('新建任务默认：模型 {model}，effort {effort}，预算 ${budget}', { model: p.agent.model, effort: p.agent.effort + (p.agent.ultracode ? ' + ultracode' : ''), budget: p.agent.budget_usd })}</div></div>`}
+    <a class=${`btn primary nt-go ${p ? '' : 'disabled'}`} href=${p ? newTaskHref(p.id) : undefined} aria-disabled=${!p}
+      title=${t('新建任务（快捷键 n）')}><${Icon} name="plus" />${t('新建任务')}<span class="kbd">n</span></a>
+    <p class="muted small nt-hint">${t('打开新建任务表单：选类型、写 prompt、选上游任务，也可以先存为草稿。')}</p>
+  </section>`;
+}
+
 function RunningSummary({ data, now }) {
   const groups = new Map();
+  // where today's cost went: the projects that spent most (fills the card while nothing runs)
+  const spent = data.projects.filter((p) => p.cost_today_usd > 0).sort((a, b) => b.cost_today_usd - a.cost_today_usd).slice(0, 4);
   for (const x of data.running) { if (!groups.has(x.project)) groups.set(x.project, []); groups.get(x.project).push(x); }
   const doing = (x) => (x.detail?.kind === 'waiting' ? t('等待中：{what}', { what: x.progress?.next || x.detail.waiting_for || '' })
     : x.detail?.kind === 'terminal' ? t('终端接管中')
       : !x.managed ? t('未托管：{what}', { what: x.progress?.next || '' }) : x.detail?.current ? t('正在执行：{what}', { what: x.detail.current }) : t('运行中'));
-  return html`<section class="side-card" aria-labelledby="h-running">
-    <h2 id="h-running"><${Icon} name="running" className="spin" />${t('运行中')} <span class="count">${data.running.length}</span>
-      ${data.queued > 0 && html`<span class="muted small">${t('待开始 {n}', { n: data.queued })}</span>`}</h2>
-    ${[...groups].map(([p, list]) => html`<div class="run-group"><a class="small" href=${`#/p/${p}`}>${data.projects.find((x) => x.id === p)?.title || p}</a>
+  return html`<section class="side-card home-card running-card" aria-labelledby="h-running">
+    <div class="card-head"><h2 id="h-running"><${Icon} name="running" className=${data.running.length ? 'busy' : ''} />${t('运行中')} <span class="count">${data.running.length}</span>
+      ${data.queued > 0 && html`<span class="muted small">${t('待开始 {n}', { n: data.queued })}</span>`}</h2></div>
+    <div class="card-body">${[...groups].map(([p, list]) => html`<div class="run-group"><a class="small" href=${`#/p/${p}`}>${data.projects.find((x) => x.id === p)?.title || p}</a>
       <ul>${list.map((x) => html`<li><a href=${taskHref(p, x.id, { tab: x.managed ? 'run' : 'docs' })}><${StatusMark} t=${x} short /><span class="ellipsis">${x.title}</span></a>
         <span class="muted small nowrap">${x.managed ? since(x.since, now) : ''}</span>
         <span class="muted small ellipsis">${doing(x)}</span></li>`)}</ul></div>`)}
-    ${!data.running.length && html`<p class="empty-line">${t('暂无运行中的任务。')}</p>`}
-    <p class="muted small cost-line">${t('今日花费')} <b>${money(data.cost_today_usd)}</b></p>
+    ${!data.running.length && html`<p class="empty-line">${t('暂无运行中的任务。')}</p>`}</div>
+    <div class="muted small cost-line"><div>${t('今日花费')} <b>${money(data.cost_today_usd)}</b></div>
+      ${spent.length > 0 && html`<ul class="cost-list">${spent.map((p) => html`<li><a class="ellipsis" href=${`#/p/${p.id}`}>${p.title}</a>
+        <span class="nowrap">${money(p.cost_today_usd)}</span></li>`)}</ul>`}</div>
   </section>`;
 }
 
 // The machines held now, across campaigns: by whom, and which holders wait for you meanwhile (闲置占用).
 function HeldMachines({ machines, now }) {
   const idle = machines.filter((m) => m.holder.idle_minutes > 0).length;
-  return html`<section class="side-card" aria-labelledby="h-machines">
+  return html`<section class="side-card held-card" aria-labelledby="h-machines">
     <h2 id="h-machines"><${Icon} name="machine" />${t('机器占用')} <span class="count">${machines.length}</span>
       ${idle > 0 && html`<span class="warn-text small">${t('{n} 台闲置占用', { n: idle })}</span>`}</h2>
     <ul class="held">${machines.map(({ name, holder: h }) => html`<li>
@@ -214,13 +280,16 @@ function NewProject({ templates, first }) {
     ev.preventDefault();
     if (!name || err) return;
     setBusy(true);
-    api.post('/api/projects', { name, template: tmpl }).then((p) => { toast(t('已创建项目 {id}', { id: p.id })); go(`#/p/${p.id}`); }, (e) => toast(e.message, { error: true })).finally(() => setBusy(false));
+    api.post('/api/projects', { name, template: tmpl }).then((p) => {
+      toast(p.template_review ? t('已创建项目 {id}：模板预置的任务等你审核后再开始', { id: p.id }) : t('已创建项目 {id}', { id: p.id }));
+      go(`#/p/${p.id}`);
+    }, (e) => toast(e.message, { error: true })).finally(() => setBusy(false));
   };
   return html`<form class="new-project" onSubmit=${create}>
     <div class="tmpl-list" role="radiogroup" aria-label=${t('模板')}>${templates.map((x) => html`<label class=${`tmpl ${tmpl === x.id ? 'on' : ''}`}>
       <input type="radio" name="tmpl" value=${x.id} checked=${tmpl === x.id} onChange=${() => setTmpl(x.id)} />
       <b>${x.title}</b><span class="small muted">${x.description}</span><span class="small mono">${x.types.join(' · ')}</span>
-      ${x.tasks?.length > 0 && html`<span class="small" title=${t('建项目时一起创建并排队；依赖让它们按顺序开始')}>${t('自带 {n} 个任务：', { n: x.tasks.length })}<span class="mono">${x.tasks.join(' · ')}</span></span>`}</label>`)}</div>
+      ${x.tasks?.length > 0 && html`<span class="small" title=${t('建项目时一起创建，等你审核后点"开始运行"；之后按依赖依次开始')}>${t('自带 {n} 个任务：', { n: x.tasks.length })}<span class="mono">${x.tasks.join(' · ')}</span></span>`}</label>`)}</div>
     <label class="field">${t('项目名称')}<input class="mono" value=${name} onInput=${(e) => setName(e.target.value)} placeholder=${t('例如 infera-perf-q4')} aria-invalid=${!!err} autofocus=${first} />
       ${err && html`<span class="error-text small">${err}</span>`}<span class="muted small">${t('将创建在')} <code>campaigns/${name || t('<项目名称>')}/</code></span></label>
     <button class="btn primary" type="submit" disabled=${busy || !name || !!err}>${t('创建项目')}</button>
