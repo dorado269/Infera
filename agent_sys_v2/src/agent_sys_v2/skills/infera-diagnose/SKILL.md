@@ -49,5 +49,7 @@ Couplings to reason about together: CUDA graph sizes x MTP depth x GEMM tuning b
 ## Output
 
 `report.md`: the bottleneck class with its evidence; a ranked list of hypotheses (lever, expected mechanism and
-size, how to measure, cost); what the ledger already rules out. Draft one experiment task per top hypothesis (see
-the campaign's experiment skeleton), each with its machines.
+size, how to measure, cost); what the ledger already rules out. In a round of the infera-perf template this is the
+profile task's job (`infera-profile`: the same list as `candidates.yaml`) and the plan drafts the experiments;
+elsewhere draft one experiment task per top hypothesis (see the campaign's experiment skeleton), each with its
+machines.

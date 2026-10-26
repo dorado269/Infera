@@ -1,7 +1,9 @@
 // Ledger: the results a campaign measured (results/*.json of its tasks, schema infera.result/v1), against the
-// baseline. The page leads with the numbers (primary metric, baseline, best and its delta), then the trajectory (one
-// dot per result over time, its A/B decision as shape + color, the baseline dashed, the best so far as a step line),
-// then the table, which holds every value the chart shows. The board's head shows the same numbers (LedgerChips).
+// baseline. The page leads with the numbers (primary metric, baseline, best and its delta), then, when the campaign
+// says its X metric (ledger.x), the curves (one Y–X line per series through its frontier, the working point and
+// each series' delta there, with a table of the series), then the trajectory (one dot per result over time, its A/B
+// decision as shape + color, the baseline dashed, the best so far as a step line), then the table, which holds
+// every value the charts show. The board's head shows the same numbers (LedgerChips).
 import { useState, useEffect, useRef } from './vendor/hooks.module.js';
 import { html, Icon, useApi, clock, taskHref, ErrorBox } from './ui.js';
 import { t as tr } from './i18n.js';
@@ -47,7 +49,9 @@ export function LedgerChips({ pid, ledger }) {
     <${Icon} name="chart" /><span class="muted">${primary}</span>
     ${b && html`<span>${tr('基线')} <b>${fmt(b.value)}</b></span>`}
     ${best && best !== b && best.delta_pct != null && html`<span>${tr('最佳')} <b>${fmt(best.value)}</b>
-      <span class=${best.delta_pct * up > 0 ? 'ok-text' : best.delta_pct * up < 0 ? 'warn-text' : 'muted'}>${deltaText(best.delta_pct)}</span></span>`}</a>`;
+      <span class=${best.delta_pct * up > 0 ? 'ok-text' : best.delta_pct * up < 0 ? 'warn-text' : 'muted'}>${deltaText(best.delta_pct)}</span></span>`}
+    ${ledger.wp_best?.delta_pct != null && html`<span title=${tr('各系列在工作点相对基线系列的变化，取最好的一条')}>${tr('工作点')} <span class="mono">${ledger.wp_best.series}</span>
+      <span class=${ledger.wp_best.delta_pct * up > 0 ? 'ok-text' : ledger.wp_best.delta_pct * up < 0 ? 'warn-text' : 'muted'}>${deltaText(ledger.wp_best.delta_pct)}</span></span>`}</a>`;
 }
 
 // ---------------------------------------------------------------- the page
@@ -61,6 +65,8 @@ export function LedgerPage({ pid }) {
   const rows = data.rows.filter((r) => !only || decisionOf(r) === only);
   const extra = data.metrics.filter((k) => k !== data.primary).slice(0, 4);
   const present = Object.keys(DECISIONS).filter((k) => data.rows.some((r) => decisionOf(r) === k));
+  // with curves and a working point, the head compares series there rather than single results
+  const curveStats = data.x && (data.series || []).some((c) => c.baseline && c.wp);
   return html`<main id="main" class="page ledger-page">
     ${error && html`<${ErrorBox} what=${tr('刷新台账')} error=${error} retry=${reload} />`}
     <header class="page-head"><div><h1>${tr('台账')}</h1>
@@ -69,15 +75,17 @@ export function LedgerPage({ pid }) {
       <section class="stat-row" aria-label=${tr('概览')}>
         <div class="stat"><span class="muted small">${tr('主指标')}</span><b class="mono">${data.primary || '—'}</b>
           <span class="muted small">${data.higher_is_better ? tr('越大越好') : tr('越小越好')}</span></div>
+        ${curveStats ? html`<${CurveStats} data=${data} up=${up} />` : html`
         <div class="stat"><span class="muted small">${tr('基线')}</span><b>${fmt(data.baseline?.value)}</b>
           ${data.baseline ? html`<a class="small" href=${taskHref(pid, data.baseline.task, { tab: 'docs', file: data.baseline.file })}>${data.baseline.label}</a>`
             : html`<span class="muted small">${tr('还没有基线（role: baseline）')}</span>`}</div>
         <div class="stat"><span class="muted small">${tr('最佳')}</span><b>${fmt(data.best?.value)}
           ${data.best?.delta_pct != null && html` <span class=${data.best.delta_pct * up > 0 ? 'ok-text' : 'muted'}>${deltaText(data.best.delta_pct)}</span>`}</b>
-          ${data.best && html`<a class="small" href=${taskHref(pid, data.best.task, { tab: 'docs', file: data.best.file })}>${data.best.label}</a>`}</div>
+          ${data.best && html`<a class="small" href=${taskHref(pid, data.best.task, { tab: 'docs', file: data.best.file })}>${data.best.label}</a>`}</div>`}
         <div class="stat"><span class="muted small">${tr('结果')}</span><b>${data.count}</b>
           <span class="muted small">${tr('作废 {n}', { n: data.void })}${data.errors.length ? tr('，格式错误 {n}', { n: data.errors.length }) : ''}</span></div>
       </section>
+      ${data.x && data.series?.length > 0 && html`<${Curves} data=${data} pid=${pid} />`}
       <section class="chart-card" aria-label=${tr('趋势')}>
         <div class="legend-row" role="group" aria-label=${tr('按判定筛选')}>
           ${present.map((k) => html`<button class="chip" aria-pressed=${only === k} onClick=${() => setOnly(only === k ? null : k)}>
@@ -172,13 +180,13 @@ export function ticks(lo, hi, n = 4) {
   return out;
 }
 
-// The best value so far at each result, in time order: the step line's corners. Only valid results that were not
-// rejected count, as for the ledger's best.
+// The best value so far at each result, in time order: the step line's corners. Only valid results of ours (not a
+// reference) that were not rejected count, as for the ledger's best.
 export function bestSoFar(rows, up) {
   let best = null;
   const out = [];
   for (const r of rows) {
-    if (typeof r.value !== 'number' || r.status !== 'valid' || r.decision === 'reject') continue;
+    if (typeof r.value !== 'number' || r.status !== 'valid' || r.decision === 'reject' || r.role === 'reference') continue;
     if (best == null || r.value * up > best * up) best = r.value;
     out.push({ t: Date.parse(r.time), v: best });
   }
@@ -227,4 +235,119 @@ function Trajectory({ data, rows, pid }) {
       <div class="muted">${tip.r.title} · ${clock(tip.r.time)}</div>
       ${tip.r.change && html`<div class="muted">${tip.r.change}</div>`}</div>`}
   </div>`;
+}
+
+// ---------------------------------------------------------------- the curves
+
+// A series keeps its color: the slot of its place in the ledger's list (the baseline first, ours by time, the
+// references last), whatever is hidden. Past the eight categorical slots a series is gray.
+export const seriesColor = (i) => (i < 8 ? `var(--series-${i + 1})` : 'var(--ink-3)');
+
+// The working point as words: "X ≥ 30" or "C64".
+export function wpText(wp, x) {
+  if (wp?.x != null) return tr('{metric} ≥ {value}', { metric: x, value: fmt(wp.x) });
+  if (wp?.conc != null) return `C${wp.conc}`;
+  return '';
+}
+
+// Labels at the right end of the curves, nudged apart vertically so that none overlaps the one above: [{y, ...}]
+// sorted by y, each at least gap below the previous.
+export function spreadLabels(labels, gap = 14) {
+  const out = [...labels].sort((a, b) => a.y - b.y);
+  for (let i = 1; i < out.length; i++) if (out[i].y - out[i - 1].y < gap) out[i] = { ...out[i], y: out[i - 1].y + gap };
+  return out;
+}
+
+const CH = 340, CM = { l: 64, r: 128, t: 18, b: 40 };
+
+function Curves({ data, pid }) {
+  const [hidden, setHidden] = useState(() => new Set());
+  const [tip, setTip] = useState(null);
+  const [box, W] = useWidth();
+  const all = data.series;
+  const color = new Map(all.map((c, i) => [c.name, seriesColor(i)]));
+  const shown = all.filter((c) => !hidden.has(c.name));
+  const pts = shown.flatMap((c) => c.points);
+  const wp = data.working_point || {};
+  const xs = [...pts.map((p) => p.x), ...(wp.x != null ? [wp.x] : [])], ys = pts.map((p) => p.y);
+  const span = (v) => {
+    let lo = Math.min(...v), hi = Math.max(...v);
+    const pad = (hi - lo) * 0.08 || Math.abs(hi) * 0.05 || 1;
+    return [lo - pad, hi + pad];
+  };
+  const toggle = (name) => { const h = new Set(hidden); if (h.has(name)) h.delete(name); else h.add(name); setHidden(h); };
+  const up = data.higher_is_better ? 1 : -1;
+  const legend = html`<div class="legend-row" role="group" aria-label=${tr('显示或隐藏系列')}>
+    ${all.map((c) => html`<button class="chip" aria-pressed=${!hidden.has(c.name)} onClick=${() => toggle(c.name)}
+      title=${c.role === 'reference' ? tr('对标（role: reference）') : c.baseline ? tr('基线系列') : ''}>
+      <svg width="22" height="10" aria-hidden="true"><line class=${`curve ${c.role === 'reference' ? 'ref' : ''}`} style=${{ stroke: color.get(c.name) }} x1="1" y1="5" x2="21" y2="5" /></svg>
+      <span class="mono">${c.name}</span>${c.baseline ? html` <span class="muted">${tr('基线')}</span>` : ''}</button>`)}
+    ${wpText(wp, data.x) && html`<span class="legend-line"><svg width="22" height="10" aria-hidden="true"><line class="wp-line" x1="11" y1="0" x2="11" y2="10" /></svg>${tr('工作点')} ${wpText(wp, data.x)}</span>`}
+  </div>`;
+  if (!pts.length) return html`<section class="chart-card" aria-label=${tr('曲线')}>${legend}<p class="empty-line">${tr('所有系列都已隐藏。')}</p></section>`;
+  const [x0, x1] = span(xs), [y0, y1] = span(ys);
+  const x = (v) => CM.l + ((v - x0) / (x1 - x0)) * (W - CM.l - CM.r);
+  const y = (v) => CH - CM.b - ((v - y0) / (y1 - y0)) * (CH - CM.t - CM.b);
+  const labels = shown.length <= 4 ? spreadLabels(shown.map((c) => {
+    const last = c.points.filter((p) => p.frontier).reduce((a, p) => (p.x > a.x ? p : a));
+    return { name: c.name, y: y(last.y), x: x(last.x) };
+  })) : [];
+  return html`<section class="chart-card" aria-label=${tr('曲线')}>
+    <h2 class="chart-title">${tr('曲线')} <span class="muted small">${tr('{y} 对 {x}，每个系列一条线，连接它的前沿点（空心点被同系列的其他点支配）', { y: data.primary, x: data.x })}</span></h2>
+    ${legend}
+    <div class="chart" ref=${box} onMouseLeave=${() => setTip(null)}>
+      <svg viewBox=${`0 0 ${W} ${CH}`} width=${W} height=${CH} role="img" aria-label=${tr('{y} 对 {x} 的曲线：{n} 个系列', { y: data.primary, x: data.x, n: shown.length })}>
+        ${ticks(y0, y1).map((v) => html`<line class="grid" x1=${CM.l} x2=${W - CM.r} y1=${y(v)} y2=${y(v)} />
+          <text class="tick" x=${CM.l - 8} y=${y(v) + 4} text-anchor="end">${fmt(v)}</text>`)}
+        ${ticks(x0, x1, Math.max(3, Math.floor(W / 140))).map((v) => html`<text class="tick" x=${x(v)} y=${CH - CM.b + 16} text-anchor="middle">${fmt(v)}</text>`)}
+        <text class="tick" x=${(CM.l + W - CM.r) / 2} y=${CH - 6} text-anchor="middle">${data.x} →</text>
+        <text class="tick" x=${CM.l} y=${CM.t - 6} text-anchor="start">↑ ${data.primary}</text>
+        ${wp.x != null && html`<line class="wp-line" x1=${x(wp.x)} x2=${x(wp.x)} y1=${CM.t} y2=${CH - CM.b} />`}
+        ${shown.map((c) => {
+          const front = c.points.filter((p) => p.frontier);
+          const d = front.map((p, i) => `${i ? 'L' : 'M'}${x(p.x)},${y(p.y)}`).join('');
+          return html`<g key=${c.name}><path class=${`curve ${c.role === 'reference' ? 'ref' : ''}`} style=${{ stroke: color.get(c.name) }} d=${d} />
+            ${c.points.map((p) => html`<circle class=${`pt ${p.frontier ? '' : 'off'}`} style=${{ [p.frontier ? 'fill' : 'stroke']: color.get(c.name) }} cx=${x(p.x)} cy=${y(p.y)} r="4" />`)}
+            ${c.wp && html`<path class="wp-mark" style=${{ stroke: color.get(c.name) }}
+              d=${`M${x(c.wp.x)},${y(c.wp.y) - 6}L${x(c.wp.x) + 6},${y(c.wp.y)}L${x(c.wp.x)},${y(c.wp.y) + 6}L${x(c.wp.x) - 6},${y(c.wp.y)}Z`} />`}
+            ${c.points.map((p) => html`<a href=${taskHref(pid, p.task, { tab: 'docs', file: p.file })} aria-label=${`${c.name} ${p.label}: ${data.x} ${fmt(p.x)}, ${data.primary} ${fmt(p.y)}`}
+              onFocus=${() => setTip({ c, p, X: x(p.x), Y: y(p.y) })} onBlur=${() => setTip(null)}>
+              <circle class="hit" cx=${x(p.x)} cy=${y(p.y)} r="10" onMouseEnter=${() => setTip({ c, p, X: x(p.x), Y: y(p.y) })} /></a>`)}</g>`;
+        })}
+        ${labels.map((l) => html`<text class="end-label" x=${Math.min(l.x + 10, W - CM.r + 8)} y=${l.y + 4}>${l.name}</text>`)}
+      </svg>
+      ${tip && html`<div class="chart-tip" style=${{ left: `${(tip.X / W) * 100}%`, top: `${(tip.Y / CH) * 100}%` }}>
+        <b>${fmt(tip.p.y)}</b> <span class="muted">${data.primary}</span>
+        <div>${fmt(tip.p.x)} <span class="muted">${data.x}</span>${tip.p.conc != null ? ` · C${tip.p.conc}` : ''}</div>
+        <div><span class="mono">${tip.c.name}</span> · ${tip.p.label}${tip.p.frontier ? '' : ` · ${tr('非前沿')}`}</div>
+        <div class="muted">${tip.p.task} · ${clock(tip.p.time)}</div></div>`}
+    </div>
+    <${SeriesTable} data=${data} pid=${pid} color=${color} up=${up} />
+  </section>`;
+}
+
+// The head's baseline and best when the ledger has curves: the baseline series and the best of ours at the working point.
+function CurveStats({ data, up }) {
+  const base = data.series.find((c) => c.baseline), best = data.wp_best;
+  const wp = wpText(data.working_point, data.x);
+  return html`<div class="stat"><span class="muted small">${tr('基线 · 工作点 {wp}', { wp })}</span><b>${fmt(base.wp.y)}</b>
+      <span class="small mono">${base.name}</span></div>
+    <div class="stat"><span class="muted small">${tr('最佳 · 工作点 {wp}', { wp })}</span><b>${fmt(best?.y)}
+      ${best?.delta_pct != null && html` <span class=${best.delta_pct * up > 0 ? 'ok-text' : 'muted'}>${deltaText(best.delta_pct)}</span>`}</b>
+      <span class="small mono">${best ? best.series : tr('还没有别的系列到达工作点')}</span></div>`;
+}
+
+function SeriesTable({ data, color, up }) {
+  const wp = data.working_point || {};
+  return html`<table class="tasks ledger series-table">
+    <thead><tr><th>${tr('系列')}</th><th>${tr('轮次')}</th><th class="num">${tr('点数')}</th>
+      <th class="num">${tr('工作点 {wp}', { wp: wpText(wp, data.x) || '—' })}</th><th class="num">Δ</th></tr></thead>
+    <tbody>${data.series.map((c) => html`<tr>
+      <td><svg width="14" height="10" aria-hidden="true"><line class=${`curve ${c.role === 'reference' ? 'ref' : ''}`} style=${{ stroke: color.get(c.name) }} x1="0" y1="5" x2="14" y2="5" /></svg>
+        <span class="mono">${c.name}</span> <span class="muted small">${c.role === 'reference' ? tr('对标') : c.baseline ? tr('基线') : ''}</span></td>
+      <td>${c.round ?? '—'}</td>
+      <td class="num">${c.points.length}</td>
+      <td class="num">${c.wp ? html`<b>${fmt(c.wp.y)}</b>${c.wp.interpolated ? html` <span class="muted small" title=${tr('在前沿上相邻两点之间插值')}>${tr('插值')}</span>` : ''}`
+        : html`<span class="muted small" title=${tr('这个系列没有到达工作点的点')}>${tr('未到达')}</span>`}</td>
+      <td class=${`num ${c.wp?.delta_pct == null || c.baseline ? 'muted' : c.wp.delta_pct * up > 0 ? 'ok-text' : c.wp.delta_pct * up < 0 ? 'warn-text' : ''}`}>${c.wp ? deltaText(c.wp.delta_pct, { baseline: c.baseline }) : '—'}</td></tr>`)}</tbody></table>`;
 }

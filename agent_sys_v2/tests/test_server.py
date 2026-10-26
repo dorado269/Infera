@@ -41,8 +41,22 @@ def test_home_board_and_task(client):
     assert home["projects"][0]["counts"]["total"] == 7 and home["archived_projects"] == []
     assert [(t["id"], t["types"]) for t in home["templates"]] == [
         ("blank", ["develop"]),
-        ("infera-perf", ["baseline", "develop", "diagnose", "experiment", "review"]),
+        (
+            "infera-perf",
+            [
+                "baseline",
+                "close",
+                "develop",
+                "experiment",
+                "intake",
+                "plan",
+                "profile",
+                "review",
+                "survey",
+            ],
+        ),
     ]
+    assert home["templates"][1]["tasks"][1] == "intake/r1"
 
     board = ok(client.get("/api/projects/demo/board"))
     assert [ty["id"] for ty in board["types"]] == ["develop", "review", "todo"] and len(
@@ -75,12 +89,16 @@ def test_new_projects_from_both_templates(client, home):
         "perf-q4",
         "Q4",
         "infera-perf",
-        0,
+        5,  # the first round's tasks come with the template
     )
     assert [ty["id"] for ty in ok(client.get("/api/projects/perf-q4/board"))["types"]] == [
+        "intake",
+        "survey",
         "baseline",
-        "diagnose",
+        "profile",
+        "plan",
         "experiment",
+        "close",
         "develop",
         "review",
     ]

@@ -53,9 +53,10 @@ PROJECT_DEFAULTS = {
 # `unknown` is only for an unmanaged progress.md whose 状态 line is none of the known words.
 STATUSES = ("draft", "queued", "running", "needs_you", "in_review", "done", "cancelled", "unknown")
 
-# Edge kinds. Only input and code block the downstream task and take part in cycle checks.
-EDGE_KINDS = ("input", "code", "review", "subtask")
-BLOCKING = ("input", "code")
+# Edge kinds. Only input, code and children block the downstream task and take part in cycle checks. children: the
+# upstream is done and so is every task whose parent it is (see Project.pending_children).
+EDGE_KINDS = ("input", "code", "children", "review", "subtask")
+BLOCKING = ("input", "code", "children")
 
 # Project, type and task names. ASCII only, the same rule as the web UI and the prompt path rule (scan.TASK_REF).
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
@@ -624,9 +625,38 @@ class Project:
         progress.md says 已完成, and with review: true only after it was approved."""
         return self.tasks[tid].status == "done"
 
+    def children(self, tid):
+        """The tasks whose parent is tid (frontmatter parent, or "这是 … 的子任务" in the prompt)."""
+        return [t.id for t in self.tasks.values() if t.parent == tid and t.id != tid]
+
+    def pending_children(self, e):
+        """For a children edge: the subtasks of its upstream that are neither done nor cancelled (drafts too: a
+        plan's draft is still part of it). The waiting task itself and its own downstream do not count, or it
+        would wait for itself."""
+        after = reachable(blocking_graph(self.edges), e.down)
+        return [
+            c
+            for c in self.children(e.up)
+            if c not in after and self.tasks[c].status not in ("done", "cancelled")
+        ]
+
+    def edge_satisfied(self, e):
+        """Whether an edge lets its downstream start: its upstream is done, and for children all of its subtasks."""
+        return self.satisfied(e.up) and not (e.kind == "children" and self.pending_children(e))
+
     def waiting_on(self, tid):
         """Blocking upstream tasks that are not done yet."""
         return [e.up for e in self.upstream(tid) if e.blocking and not self.satisfied(e.up)]
+
+    def waiting_on_children(self, tid):
+        """{upstream: [its pending subtasks]} of the children edges into tid whose upstream is done."""
+        return {
+            e.up: pending
+            for e in self.upstream(tid)
+            if e.kind == "children"
+            and self.satisfied(e.up)
+            and (pending := self.pending_children(e))
+        }
 
     def counts(self):
         counts = dict.fromkeys(STATUSES, 0)
@@ -680,18 +710,20 @@ def blocking_graph(edges):
     return graph
 
 
-def reaches(graph, start, goal):
-    """True if goal can be reached from start in a blocking_graph()."""
+def reachable(graph, start):
+    """Every task reached from start in a blocking_graph(), start included."""
     seen, todo = {start}, [start]
     while todo:
-        tid = todo.pop()
-        if tid == goal:
-            return True
-        for nxt in graph.get(tid, ()):
+        for nxt in graph.get(todo.pop(), ()):
             if nxt not in seen:
                 seen.add(nxt)
                 todo.append(nxt)
-    return False
+    return seen
+
+
+def reaches(graph, start, goal):
+    """True if goal can be reached from start in a blocking_graph()."""
+    return goal in reachable(graph, start)
 
 
 def cycle_tasks(edges):

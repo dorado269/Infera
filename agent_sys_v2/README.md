@@ -70,19 +70,26 @@ campaigns/<c>/repos/                                  code the agents work on (n
 
 1. On the home page, **New project** with the template **Infera 性能优化** (`infera-perf`); or
    `agent-sys-v2 new glm52-agentx --template infera-perf --title "GLM-5.2 4P4D AgentX"`.
-2. In the campaign's **Settings**: the goal, the machines (one per line: `host gpus note`), the ledger's primary
-   metric (default `tok_s_gpu`).
-3. Write `campaigns/<c>/rules/project.md`: model, engine, kit, workload, which branch. Clone Infera into
-   `campaigns/<c>/repos/Infera`: the agents work from the campaign directory and the skills refer to
-   `repos/Infera/examples/<kit>`.
-4. **New task** of type `baseline`, tick its machines, **Create and queue**: it starts at once. Follow it in **Run
-   output**; write to the agent in the box at the bottom (even while it runs); **Stop**; **Take over in terminal**.
-5. Then a `diagnose` task depending on the baseline. It writes a report and drafts `experiment` subtasks; approve them
-   all with **Join them all** in its drawer. Each experiment holds its machines; the others wait for them.
-6. The **Ledger** tab shows every result against the baseline. A task that is done but fails its checks comes back
-   to you under **Needs you** with the checks' output.
+   The template comes with round one queued: `intake/r1` → `survey/r1` ∥ `baseline/r1` → `profile/r1` → `plan/r1`.
+   Clone Infera into `campaigns/<c>/repos/Infera`: the agents work from the campaign directory and the skills refer
+   to `repos/Infera/examples/<kit>`.
+2. `intake/r1` starts at once: it looks around (weights, InferenceX, the nodes) and asks you a prefilled
+   questionnaire (**Answer N questions**; a row you leave empty takes its suggestion). With your answers it writes the
+   campaign's `rules/project.md`, the goal, machines and working point in `project.yaml`, and a one-page brief you
+   approve. Nothing downstream starts before that.
+3. The survey (InferenceX reference curves, no GPU) and the baseline (the v0 curve, noise, calibration) run, then
+   the profile (cheap layers first, `candidates.yaml`; you approve it). Follow a task in **Run output**; write to
+   the agent in the box at the bottom (even while it runs); **Stop**; **Take over in terminal**.
+4. `plan/r1` ranks the candidates, splits the round's GPU budget over the machines and drafts the experiments
+   (subtasks) and `close/r1`. Approve the plan, then **Join them all** in its drawer: the experiments and the close
+   are queued together. Each experiment holds its machines; the close waits (`kind: children`) until the plan's
+   every subtask is done or cancelled, integrates what was accepted, measures the curve, seals v1 if it beats v0,
+   and drafts `intake/r2`: the next round's questionnaire, prefilled with its advice.
+5. The **Ledger** tab draws every series as a Y–X curve (ours, the baseline, the references) with its value at the
+   working point. A task that is done but fails its checks comes back to you under **Needs you** with their output.
 
-A task file, with what agent_sys v2 adds:
+A task file, with what agent_sys v2 adds (`depends_on` kinds: `input` and `code` wait for the upstream to be done,
+`children` for the upstream and all of its subtasks; `review` and `subtask` do not block):
 
 ```markdown
 ---

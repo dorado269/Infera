@@ -1,22 +1,37 @@
-"""The ledger (design §5.6): the results a campaign's tasks measured, read into one table with its baseline and best.
+"""The ledger (design §5.6): the results a campaign's tasks measured, read into one table with its baseline and best,
+and into Y–X curves, one per series.
 
 A result is a JSON file in a task's workspace, results/*.json (or deeper under results/), with
 
   {"schema": "infera.result/v1", "label": "c64-spf", "metrics": {"tok_s_gpu": 14120.5, ...},
-   "role": "baseline" | "candidate", "time": "2026-10-24T10:00:00Z", "change": "...", "workload": {...},
+   "role": "baseline" | "candidate" | "reference", "round": 1, "series": "v0",
+   "time": "2026-10-24T10:00:00Z", "change": "...", "workload": {"conc": 64, ...},
    "config": {...}, "verdict": {"status": "valid" | "void", "decision": "accept" | "reject" | "noise" | "rerun",
    "vs_baseline_pct": 15.4, "notes": "..."}, "evidence": {...}}
 
-schema, label and metrics (numbers) are required. project.yaml says how to read them:
+schema, label and metrics (numbers) are required. role reference is someone else's number (an InferenceX curve):
+it is drawn and compared, never the baseline or the best. round is the campaign's round the result belongs to, series
+the curve it is a point of (v0, v1 for the versions, r2-spf for an experiment, ix:<entry> for a reference); the points
+of a series are told apart by workload.conc. project.yaml says how to read them:
 
   ledger: {primary: tok_s_gpu, higher_is_better: true, baseline: experiment/b0}    # baseline: a task or a file
+  ledger: {primary: input_tput_per_gpu, x: p90_intvty, baseline_series: v0, working_point: {x: 30}}   # curves
 
 Without a baseline the latest valid result with role baseline is it. delta_pct is the primary metric against the
-baseline; best is the best valid result that was not rejected. Files are read again only when they change.
+baseline; with a baseline series, a result with a concurrency is compared with that series' point at the same
+concurrency. best is the best valid result of ours (not a reference) that was not rejected. With x (the curves' X
+metric; x_higher_is_better, default true) every series is a curve: its points sorted by X, its frontier (the points
+no other point of the series beats on both axes), and its value at the working point: {conc: C} = its points at
+concurrency C; {x: X} = the best Y with X at least that (on the frontier, interpolated between two points), the
+"maximise throughput at an interactivity SLA" of a campaign's goal. Files are read again only when they change.
 
   python -m agent_sys_v2.ledger check <dir or file> ... [--require-verdict]
+  python -m agent_sys_v2.ledger agentx <agentx_conc*.json or dir> ... --out results --series v0 [--round 1]
+                                       [--role baseline] [--label PREFIX] [--change TEXT] [--time ISO]
 
-checks result files (a task's acceptance check): exit 1 and the reasons when one is wrong or there is none.
+check checks result files (a task's acceptance check): exit 1 and the reasons when one is wrong or there is none.
+agentx writes one result per InferenceX AgentX output (agentx_conc<C>.json), with the metrics the InferenceX App
+derives from it (ix_metrics), so our points and the official ones plot on one chart.
 """
 
 from __future__ import annotations
@@ -31,6 +46,7 @@ from .model import iso, plain
 SCHEMA = "infera.result/v1"
 DECISIONS = ("accept", "reject", "noise", "rerun")
 STATUSES = ("valid", "void")
+ROLES = ("baseline", "candidate", "reference")
 _cache = {}  # path -> ((mtime_ns, size), doc, errors)
 
 
@@ -50,8 +66,16 @@ def validate(doc, require_verdict=False):
     metrics = doc.get("metrics")
     if not isinstance(metrics, dict) or not any(number(v) for v in metrics.values()):
         errors.append("metrics should hold at least one number")
-    if doc.get("role", "candidate") not in ("baseline", "candidate"):
-        errors.append("role should be baseline or candidate")
+    if doc.get("role", "candidate") not in ROLES:
+        errors.append(f"role should be one of {', '.join(ROLES)}")
+    if "round" in doc and not (
+        isinstance(doc["round"], int) and not isinstance(doc["round"], bool) and doc["round"] >= 0
+    ):
+        errors.append("round should be a whole number (the campaign's round)")
+    if "series" in doc and not (isinstance(doc["series"], str) and doc["series"].strip()):
+        errors.append("series should be a name (the curve the point belongs to)")
+    if "workload" in doc and not isinstance(doc["workload"], dict):
+        errors.append("workload should be an object")
     verdict = doc.get("verdict")
     if verdict is not None and not isinstance(verdict, dict):
         errors.append("verdict should be an object")
@@ -100,6 +124,15 @@ def files(workspace):
     return sorted(p for p in root.rglob("*.json") if p.is_file()) if root.is_dir() else []
 
 
+def working_point(value):
+    """project.yaml's ledger.working_point -> {conc: C} or {x: X}; {} when it is neither."""
+    value = value if isinstance(value, dict) else {}
+    for key in ("conc", "x"):
+        if number(value.get(key)):
+            return {key: value[key]}
+    return {}
+
+
 def settings(project):
     cfg = plain(project.config.get("ledger")) or {}
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -107,6 +140,10 @@ def settings(project):
         "primary": str(cfg.get("primary") or ""),
         "higher_is_better": cfg.get("higher_is_better", True) is not False,
         "baseline": str(cfg.get("baseline") or ""),
+        "x": str(cfg.get("x") or ""),
+        "x_higher_is_better": cfg.get("x_higher_is_better", True) is not False,
+        "baseline_series": str(cfg.get("baseline_series") or ""),
+        "working_point": working_point(cfg.get("working_point")),
     }
 
 
@@ -122,6 +159,7 @@ def rows(project):
             if doc is None or errors:
                 continue
             verdict = doc.get("verdict") if isinstance(doc.get("verdict"), dict) else {}
+            workload = doc.get("workload") if isinstance(doc.get("workload"), dict) else {}
             out.append(
                 {
                     "task": t.id,
@@ -131,11 +169,12 @@ def rows(project):
                     "label": str(doc["label"]),
                     "time": str(doc.get("time") or iso(path.stat().st_mtime)),
                     "role": doc.get("role", "candidate"),
+                    "round": doc.get("round"),
+                    "series": str(doc.get("series") or "").strip(),
+                    "conc": workload.get("conc") if number(workload.get("conc")) else None,
                     "change": str(doc.get("change") or ""),
                     "metrics": {k: v for k, v in doc["metrics"].items() if number(v)},
-                    "workload": doc.get("workload")
-                    if isinstance(doc.get("workload"), dict)
-                    else {},
+                    "workload": workload,
                     "status": verdict.get("status", "valid"),
                     "decision": verdict.get("decision") or "",
                     "notes": str(verdict.get("notes") or ""),
@@ -161,8 +200,128 @@ def pick_baseline(table, cfg):
     )
 
 
+def pct(value, base):
+    return (
+        round((value - base) / abs(base) * 100, 2)
+        if number(value) and number(base) and base
+        else None
+    )
+
+
+# ---------------------------------------------------------------- curves
+
+
+def frontier(points, sx, sy):
+    """The points no other one beats: at least as good on both axes and better on one (sx, sy: +1 when higher is
+    better). Returns their indexes."""
+    out = []
+    for i, p in enumerate(points):
+        beaten = any(
+            q["x"] * sx >= p["x"] * sx
+            and q["y"] * sy >= p["y"] * sy
+            and (q["x"] * sx > p["x"] * sx or q["y"] * sy > p["y"] * sy)
+            for q in points
+        )
+        if not beaten:
+            out.append(i)
+    return out
+
+
+def at_x(front, x0, sx, sy):
+    """The best Y of a frontier among X at least x0 (in the better direction): interpolated where x0 falls between
+    two frontier points, the best Y overall when every point is past x0, None when none reaches it."""
+    pts = sorted(front, key=lambda p: p["x"] * sx)
+    past = [p for p in pts if p["x"] * sx >= x0 * sx]
+    if not past:
+        return None
+    first = past[0]
+    before = [p for p in pts if p["x"] * sx < x0 * sx]
+    if not before or first["x"] == x0:
+        best = max(past, key=lambda p: p["y"] * sy)
+        return {"x": best["x"], "y": best["y"], "conc": best["conc"], "interpolated": False}
+    a, b = before[-1], first
+    y = a["y"] + (b["y"] - a["y"]) * (x0 - a["x"]) / (b["x"] - a["x"])
+    return {"x": x0, "y": round(y, 6), "conc": None, "interpolated": True}
+
+
+def at_conc(points, conc):
+    """A series at one concurrency: the mean of its points there (repeats), None if it has none."""
+    pts = [p for p in points if p["conc"] == conc]
+    if not pts:
+        return None
+    mean = lambda k: round(sum(p[k] for p in pts) / len(pts), 6)  # noqa: E731
+    return {"x": mean("x"), "y": mean("y"), "conc": conc, "n": len(pts), "interpolated": False}
+
+
+def curves(table, cfg, primary, base_series):
+    """The series as Y (primary) against X curves: [{name, role, round, points, wp}], points sorted by X with their
+    frontier flag; wp = the series at the working point with its delta against the baseline series."""
+    x = cfg["x"]
+    if not x or not primary:
+        return []
+    sx, sy = (1 if cfg["x_higher_is_better"] else -1), (1 if cfg["higher_is_better"] else -1)
+    groups = {}
+    for r in table:
+        vx, vy = r["metrics"].get(x), r["metrics"].get(primary)
+        if r["series"] and r["status"] == "valid" and number(vx) and number(vy):
+            groups.setdefault(r["series"], []).append(r)
+    out = []
+    for name, rs in groups.items():
+        points = sorted(
+            (
+                {
+                    "x": r["metrics"][x],
+                    "y": r["metrics"][primary],
+                    "conc": r["conc"],
+                    "label": r["label"],
+                    "task": r["task"],
+                    "file": r["file"],
+                    "time": r["time"],
+                    "decision": r["decision"],
+                }
+                for r in rs
+            ),
+            key=lambda p: p["x"] * sx,
+        )
+        on = set(frontier(points, sx, sy))
+        for i, p in enumerate(points):
+            p["frontier"] = i in on
+        roles = {r["role"] for r in rs}
+        rounds = [r["round"] for r in rs if number(r["round"])]
+        wp = cfg["working_point"]
+        if "conc" in wp:
+            value = at_conc(points, wp["conc"])
+        elif "x" in wp:
+            value = at_x([p for p in points if p["frontier"]], wp["x"], sx, sy)
+        else:
+            value = None
+        out.append(
+            {
+                "name": name,
+                "role": "reference"
+                if roles == {"reference"}
+                else "baseline"
+                if name == base_series or "baseline" in roles
+                else "candidate",
+                "baseline": name == base_series,
+                "round": max(rounds) if rounds else None,
+                "time": max(r["time"] for r in rs),
+                "points": points,
+                "wp": value,
+            }
+        )
+    base = next((c for c in out if c["baseline"]), None)
+    base_y = base["wp"]["y"] if base and base["wp"] else None
+    for c in out:
+        if c["wp"]:
+            c["wp"]["delta_pct"] = pct(c["wp"]["y"], base_y)
+    # the baseline first, then ours by time, the references last
+    return sorted(out, key=lambda c: (not c["baseline"], c["role"] == "reference", c["time"]))
+
+
 def ledger(project):
-    """The project's ledger: settings, the primary metric, baseline, best, rows with delta_pct, files in error."""
+    """The project's ledger: settings, the primary metric, baseline, best, rows with delta_pct, the curves, files in
+    error."""
     cfg = settings(project)
     table, bad = rows(project)
     primary = (
@@ -173,31 +332,59 @@ def ledger(project):
     sign = 1 if cfg["higher_is_better"] else -1
     base = pick_baseline(table, cfg)
     base_value = base["metrics"].get(primary) if base else None
+    base_series = cfg["baseline_series"] or (base["series"] if base else "")
+    # the baseline series at each concurrency: what a result at that concurrency is compared with
+    by_conc = {}
+    for r in table:
+        if r["series"] == base_series and base_series and r["status"] == "valid":
+            if r["conc"] is not None and number(r["metrics"].get(primary)):
+                by_conc.setdefault(r["conc"], []).append(r["metrics"][primary])
     for r in table:
         r["value"] = r["metrics"].get(primary)
         r["baseline"] = r is base
-        r["delta_pct"] = (
-            round((r["value"] - base_value) / abs(base_value) * 100, 2)
-            if number(r["value"]) and number(base_value) and base_value
-            else None
-        )
+        if (
+            r["conc"] is not None and by_conc
+        ):  # on a curve: the baseline at the same concurrency, or nothing
+            same = by_conc.get(r["conc"])
+            r["delta_pct"] = pct(r["value"], sum(same) / len(same)) if same else None
+        else:
+            r["delta_pct"] = pct(r["value"], base_value)
         r["better"] = r["delta_pct"] is not None and r["delta_pct"] * sign > 0
     eligible = [
         r
         for r in table
-        if number(r["value"]) and r["status"] == "valid" and r["decision"] != "reject"
+        if number(r["value"])
+        and r["status"] == "valid"
+        and r["decision"] != "reject"
+        and r["role"] != "reference"
     ]
     best = max(eligible, key=lambda r: r["value"] * sign, default=None)
     keys = list(dict.fromkeys(k for r in table for k in r["metrics"]))
+    series = curves(table, cfg, primary, base_series)
+    ours = [
+        c
+        for c in series
+        if c["role"] != "reference"
+        and not c["baseline"]
+        and c["wp"]
+        and c["wp"]["delta_pct"] is not None
+    ]
+    wp_best = max(ours, key=lambda c: c["wp"]["delta_pct"] * sign, default=None)
     return {
         "primary": primary,
         "higher_is_better": cfg["higher_is_better"],
+        "x": cfg["x"],
+        "x_higher_is_better": cfg["x_higher_is_better"],
+        "working_point": cfg["working_point"],
+        "baseline_series": base_series,
         "baseline": brief_row(base),
         "best": brief_row(best),
+        "wp_best": wp_best and {"series": wp_best["name"], **wp_best["wp"]},
         "count": len(table),
         "void": sum(r["status"] == "void" for r in table),
         "metrics": keys,
         "rows": table,
+        "series": series,
         "errors": bad,
     }
 
@@ -210,7 +397,7 @@ def brief_row(r):
 
 def head(full):
     """What the board's head shows of a ledger: primary metric, baseline, best and counts, without the rows."""
-    return {k: v for k, v in full.items() if k not in ("rows", "metrics")}
+    return {k: v for k, v in full.items() if k not in ("rows", "metrics", "series")}
 
 
 def task_briefs(full):
@@ -229,6 +416,7 @@ def task_briefs(full):
         if (
             d is not None
             and r["status"] == "valid"
+            and r["role"] != "reference"
             and (b["best_delta_pct"] is None or d * sign > b["best_delta_pct"] * sign)
         ):
             b["best_delta_pct"] = d
@@ -238,6 +426,145 @@ def task_briefs(full):
         )
         out[e["task"]]["errors"] += 1
     return out
+
+
+# ---------------------------------------------------------------- InferenceX AgentX output -> result
+
+
+def ix_metrics(agg):
+    """The metrics of one agentx_conc<C>.json as the InferenceX App ingests it (its API names): for agentic rows the
+    full-response ITL replaces the ITL when present, and interactivity is 1 / ITL of the same statistic; the
+    e2e-normalized interactivity is the client's (the App recomputes the same formula). Throughput per GPU counts
+    every GPU of the deployment (num_gpus: P and D), input including cache hits."""
+    rm = agg["request_metrics"]
+    lat = rm["latency"]
+    itl = lat.get("full_response_itl") or lat["itl"]
+    per_gpu = rm["throughput"]["per_gpu"]
+    inv = lambda v: 1 / v if number(v) and v else None  # noqa: E731
+    out = {
+        "input_tput_per_gpu": per_gpu.get("input_tput_tps"),
+        "tput_per_gpu": per_gpu.get("total_tput_tps"),
+        "output_tput_per_gpu": per_gpu.get("output_tput_tps"),
+        "p90_intvty": inv(itl.get("p90")),
+        "median_intvty": inv(itl.get("p50")),
+        "p90_e2e_norm_intvty": (lat.get("e2e_norm_intvty") or {}).get("p90"),
+        "p90_ttft": (lat.get("ttft") or {}).get("p90"),
+        "median_ttft": (lat.get("ttft") or {}).get("p50"),
+        "p90_e2el": (lat.get("e2el") or {}).get("p90"),
+        "p90_itl": itl.get("p90"),
+    }
+    return {k: round(v, 6) for k, v in out.items() if number(v)}
+
+
+def topology(agg):
+    """'P 1×TP1·PP4 → D 1×TP4·DCP4' for a PD deployment, 'TP8·EP8' for one engine."""
+
+    def side(prefix):
+        n = lambda k: agg.get(f"{prefix}_{k}") or 1  # noqa: E731
+        parts = [f"TP{n('tp')}"] + [
+            f"{name}{n(key)}"
+            for name, key in (("PP", "pp"), ("DCP", "dcp_size"), ("EP", "ep"))
+            if n(key) > 1
+        ]
+        if str(agg.get(f"{prefix}_dp_attention")).lower() == "true":
+            parts.append("DPA")
+        workers = n("num_workers")
+        return ("" if workers == 1 else f"{workers}×") + "·".join(parts)
+
+    if agg.get("disagg"):
+        return f"P {side('prefill')} → D {side('decode')}"
+    parts = [f"TP{agg.get('tp') or 1}"] + ([f"EP{agg['ep']}"] if (agg.get("ep") or 1) > 1 else [])
+    return "·".join(parts)
+
+
+def from_agentx(agg, source, series, round_=None, role="candidate", label="", change="", time=""):
+    """One infera.result/v1 document from an agentx_conc<C>.json. Raises ValueError when it is not one."""
+    try:
+        conc = agg["conc"]
+        metrics = ix_metrics(agg)
+    except (KeyError, TypeError, AttributeError) as e:
+        raise ValueError(f"not an AgentX result (agentx_conc<C>.json): missing {e}") from None
+    if not metrics:
+        raise ValueError("not an AgentX result: no throughput or latency numbers")
+    accounting = agg.get("request_accounting") or {}
+    throughput = agg["request_metrics"].get("throughput") or {}
+    metrics |= {
+        k: v
+        for k, v in (
+            ("requests", agg.get("num_requests_successful")),
+            ("errors", accounting.get("records_error_dropped")),
+        )
+        if number(v)
+    }
+    doc = {
+        "schema": SCHEMA,
+        "label": f"{label or series}-c{conc}",
+        "time": time,
+        "role": role,
+        **({"round": round_} if round_ is not None else {}),
+        "series": series,
+        "change": change,
+        "metrics": metrics,
+        "workload": {
+            "client": "agentx",
+            "conc": conc,
+            "duration_s": throughput.get("duration_seconds"),
+            "dataset": (agg.get("dataset") or {}).get("hf_dataset_name")
+            or (agg.get("dataset") or {}).get("loader"),
+            "num_gpus": agg.get("num_gpus"),
+            "requests_total": agg.get("num_requests_total"),
+        },
+        "config": {
+            "hw": agg.get("hw"),
+            "image": agg.get("image"),
+            "model": agg.get("model"),
+            "framework": agg.get("framework"),
+            "precision": agg.get("precision"),
+            "spec_decoding": agg.get("spec_decoding"),
+            "disagg": agg.get("disagg"),
+            "topology": topology(agg),
+            "kv_offloading": agg.get("kv_offloading"),
+            "router": (agg.get("router") or {}).get("name")
+            if isinstance(agg.get("router"), dict)
+            else agg.get("router"),
+        },
+        "evidence": {"agentx": str(source)},
+    }
+    for part in ("workload", "config"):
+        doc[part] = {k: v for k, v in doc[part].items() if v not in (None, "")}
+    return doc
+
+
+def convert_agentx(paths, out, series, round_=None, role="candidate", label="", change="", time=""):
+    """Write a result into out for every agentx_conc*.json under paths. Returns (files written, errors)."""
+    written, errors = [], []
+    found = []
+    for p in map(Path, paths):
+        found += sorted(p.rglob("agentx_conc*.json")) if p.is_dir() else [p]
+    if not found:
+        errors.append(f"no agentx_conc*.json under {', '.join(map(str, paths))}")
+    out = Path(out)
+    for f in found:
+        try:
+            agg = json.loads(f.read_text(encoding="utf-8"))
+            doc = from_agentx(
+                agg,
+                f.resolve(),
+                series,
+                round_,
+                role,
+                label,
+                change,
+                time or iso(f.stat().st_mtime),
+            )
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as e:
+            errors.append(f"{f}: {e}")
+            continue
+        target = out / f"{doc['label']}.json"
+        out.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        written.append(target)
+    return written, errors
 
 
 # ---------------------------------------------------------------- python -m agent_sys_v2.ledger check
@@ -269,7 +596,8 @@ def check(paths, require_verdict=False):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        prog="python -m agent_sys_v2.ledger", description="Check infera.result files."
+        prog="python -m agent_sys_v2.ledger",
+        description="Check infera.result files; convert AgentX output.",
     )
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("check", help="exit 1 unless every result file under the paths is valid")
@@ -277,7 +605,39 @@ def main(argv=None):
     c.add_argument(
         "--require-verdict", action="store_true", help="a candidate must carry verdict.decision"
     )
+    a = sub.add_parser(
+        "agentx", help="write a result file for every agentx_conc*.json under the paths"
+    )
+    a.add_argument("paths", nargs="+")
+    a.add_argument("--out", required=True, help="the results directory to write into")
+    a.add_argument(
+        "--series", required=True, help="the curve the points belong to, e.g. v0 or r2-spf"
+    )
+    a.add_argument("--round", type=int, help="the campaign's round")
+    a.add_argument("--role", choices=ROLES, default="candidate")
+    a.add_argument(
+        "--label",
+        default="",
+        help="label prefix (default: the series); the label is <prefix>-c<conc>",
+    )
+    a.add_argument("--change", default="", help="one line: what differs from the baseline")
+    a.add_argument(
+        "--time", default="", help="ISO time of the measurement (default: the file's mtime)"
+    )
     args = ap.parse_args(argv)
+    if args.cmd == "agentx":
+        written, errors = convert_agentx(
+            args.paths,
+            args.out,
+            args.series,
+            args.round,
+            args.role,
+            args.label,
+            args.change,
+            args.time,
+        )
+        print("\n".join([f"wrote {w}" for w in written] + errors))
+        return 0 if written and not errors else 1
     ok, lines = check(args.paths, args.require_verdict)
     print("\n".join(lines))
     return 0 if ok else 1

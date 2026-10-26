@@ -51,3 +51,17 @@ command (`benchmark_command.txt` / `replay-command.txt`), the raw client output 
 and D GPUs. `p90_interactivity` is 1 / p90 ITL (tok/s/user). Use the campaign's `ledger.primary` as the key of the
 main metric. Check the file before you report: `"$AGENT_SYS_PYTHON" -m agent_sys_v2.ledger check results/`.
 A candidate's `verdict` comes from `infera-experiment`.
+
+**AgentX points: convert, do not copy numbers by hand.** The converter writes one result per `agentx_conc<C>.json`
+with the metric names and definitions of the InferenceX App (`input_tput_per_gpu`, `tput_per_gpu`, `p90_intvty` =
+1 / p90 full-response ITL, `p90_e2e_norm_intvty`, `p90_ttft`, ...), so our curves and the official ones plot on one
+chart (the infera-perf template's ledger uses `input_tput_per_gpu` against `p90_intvty`):
+
+```bash
+"$AGENT_SYS_PYTHON" -m agent_sys_v2.ledger agentx <run dirs or agentx_conc*.json> --out "$AGENT_SYS_WORKSPACE/results" \
+  --series v0 --round 1 --role baseline          # a version's curve; an experiment: --series r1-spf, role candidate
+```
+
+Every point of a curve carries `round` (the campaign's round), `series` (the curve: `v0`, `r2-spf`, `ix:<entry>` for
+a reference, `role: reference`) and `workload.conc`; the ledger draws each series as a Y–X curve with its frontier
+and compares series at the campaign's working point. Add the verdict afterwards (`infera-experiment`).

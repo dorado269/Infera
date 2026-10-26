@@ -172,7 +172,7 @@ def edge_end(p, e, other):
         "evidence": e.evidence,
         "source": e.source,
         "blocking": e.blocking,
-        "satisfied": p.satisfied(e.up),
+        "satisfied": p.edge_satisfied(e),
     }
 
 

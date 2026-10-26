@@ -149,31 +149,44 @@ def test_infera_perf_template(tmp_path):
     t = {x["id"]: x for x in ops.list_templates()}["infera-perf"]
     assert t["description"] and {x["id"]: x["review"] for x in t["types"]} == {
         "baseline": False,
+        "close": False,
         "develop": False,
-        "diagnose": True,
         "experiment": False,
+        "intake": True,
+        "plan": True,
+        "profile": True,
         "review": True,
+        "survey": False,
     }
+    assert t["tasks"] == ["baseline/r1", "intake/r1", "plan/r1", "profile/r1", "survey/r1"]
     pdir = ops.new_project(tmp_path, "perf-q4", "infera-perf", title="Q4 性能")
     p = load_project(pdir)
-    # the lanes in the campaign's order; the ledger, machines and skills are the campaign's to fill in
+    # the lanes in the order of a round; the ledger's curves, machines and skills are the campaign's to fill in
     assert p.title == "Q4 性能" and [ty.id for ty in p.types] == [
+        "intake",
+        "survey",
         "baseline",
-        "diagnose",
+        "profile",
+        "plan",
         "experiment",
+        "close",
         "develop",
         "review",
     ]
-    assert p.config["ledger"]["primary"] == "tok_s_gpu" and p.config["machines"] == []
-    assert "infera-experiment" in p.config["skills"]
+    assert p.config["ledger"]["primary"] == "input_tput_per_gpu" and p.config["machines"] == []
+    assert p.config["ledger"]["x"] == "p90_intvty" and p.config["round"] == 1
+    assert "infera-experiment" in p.config["skills"] and "infera-profile" in p.config["skills"]
     assert (pdir / "rules/project.md").read_text(encoding="utf-8").startswith("# Campaign 说明")
     # a task written from each skeleton as is: no edges; it gets its type's acceptance checks
     for ty in p.types:
         ops.new_task(pdir, ty.id, f"first_{ty.id}", ty.skeleton, review=ty.review, queue=False)
     p = load_project(pdir)
-    assert p.edges == [] and p.tasks["diagnose/first_diagnose"].review
+    assert not [e for e in p.edges if "first_" in e.up or "first_" in e.down]
+    assert p.tasks["profile/first_profile"].review
     assert all("## 任务描述" in ty.skeleton and "report.md" in ty.skeleton for ty in p.types)
     checks = {tid: [c["run"] for c in t.checks] for tid, t in p.tasks.items()}
+    assert any("perfcheck plan" in c for c in checks["plan/first_plan"])
+    assert any("perfcheck close" in c for c in checks["close/first_close"])
     assert checks["review/first_review"] == []
     assert any("--require-verdict" in c for c in checks["experiment/first_experiment"])
     assert any("agent_sys_v2.ledger check" in c for c in checks["baseline/first_baseline"])

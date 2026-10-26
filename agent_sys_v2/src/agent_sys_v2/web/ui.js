@@ -32,6 +32,7 @@ export function statusLine(task, titleOf = (id) => id) {
   const next = task.progress?.next;
   switch (`${task.status}:${d.kind || ''}`) {
     case 'queued:upstream': return t('等待上游任务：{tasks}', { tasks: list((d.tasks || []).map(titleOf)) });
+    case 'queued:children': return t('等待 {parents} 的子任务：{tasks}', { parents: list((d.parents || []).map(titleOf)), tasks: list((d.tasks || []).map(titleOf)) });
     case 'queued:concurrency': return d.scope === 'global' ? t('等待运行名额（全局上限 {n} 个）', { n: d.limit })
       : t('等待运行名额（项目上限 {n} 个）', { n: d.limit });
     case 'queued:machines': return t('等待机器：{machines}', { machines: list((d.machines || []).map((m) => t('{name}（被 {task} 占用）', { name: m.name, task: m.title || m.task }))) });
@@ -74,10 +75,11 @@ export function iconOf(t) {
 export const EDGE_KINDS = {
   input: { get label() { return t('产出依赖'); }, get desc() { return t('使用上游的结果、报告或数据；阻塞下游'); } },
   code: { get label() { return t('代码基线'); }, get desc() { return t('基于上游的分支、commit 或镜像；阻塞下游'); } },
+  children: { get label() { return t('等子任务'); }, get desc() { return t('上游完成、且它的子任务全部完成或取消后才开始（不含本任务和它的下游）；阻塞下游'); } },
   review: { get label() { return t('评审覆盖'); }, get desc() { return t('评审范围包含上游的改动；不阻塞下游，不计入上下游追溯'); } },
   subtask: { get label() { return t('父子任务'); }, get desc() { return t('由父任务拆分出的子任务；不阻塞下游'); } },
 };
-export const BLOCKING = new Set(['input', 'code']);
+export const BLOCKING = new Set(['input', 'code', 'children']);
 
 // ---------------------------------------------------------------- formatting
 

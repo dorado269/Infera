@@ -54,23 +54,24 @@ agent_sys v2 是 Infera 的**性能工程 agent 工作台**。一名工程师在
 - **评审者**：看结论和证据，决定哪些改动进 overlay 补丁或 PR。
 - **团队**：skills、经验库和基线在 campaign 之间共享。
 
-**核心循环**（模板 `infera-perf`）：
+**核心循环**（模板 `infera-perf`，按轮推进；第 1 轮的 5 个任务由模板在建项目时预置）：
 
 ```
- ① baseline        部署 + 质量门 + 基准测试 → 基线结果（台账里的 baseline）
+ ① intake/rN       预填问卷 → 你回答 → 写 campaign 的规则、目标、机器、工作点 → brief（审核）
         │
- ② diagnose ◄───── 读台账，多层分诊：指标、日志、GPU trace、CPU profile
-        │          → 给瓶颈分类，列出带证据的假设 → 为每个假设起草一个 experiment 子任务
-        ▼          （人在看板上批准；也可以设成自动批准）
- ③ experiment × N  一个假设一个任务：改一个变量 → 证明杠杆生效 → A/B → 写结果和判定
-        │          按机器占用并行；验收检查确认结果文件完整、判定存在
-        ▼
- ④ 下一轮 diagnose（子任务全部完成后，人或系统唤醒父任务）…… 直到达到目标
+ ② survey/rN ∥ baseline/r1   对标曲线进台账（reference）、配置差异表 ∥ v0 曲线、噪声、快速验证标定
         │
- ⑤ integrate       合并被接受的改动 → 复测 → overlay 补丁或 PR → 最终报告
+ ③ profile/rN      从便宜的层做起：时间账 → 资源利用 → 只对瓶颈层做 kernel / CPU → candidates.yaml（审核）
+        │
+ ④ plan/rN         候选排序、GPU 预算和机器分配（审核）→ 起草 experiment 子任务和 close/rN
+        │
+ ⑤ experiment × N  一个大杠杆或一组同层小杠杆：快速验证迭代 → 工作点单点 A/B → 判定；按机器并行
+        │
+ ⑥ close/rN        depends_on {plan/rN, kind: children}：子任务全部完成或取消后开始；集成 → 整条曲线 →
+                   封版 vN（不劣于 v(N−1) 时）→ 复盘 → 起草 intake/r(N+1)（带建议的增量问卷）
 ```
 
-和固定流水线的区别：②决定③做什么，③的结果又决定下一轮②。kernel 优化只是③的一种，跟 tokenizer workers、调度策略、P:D 比、Mooncake 参数一视同仁，由②的证据决定先做哪个。
+和固定流水线的区别：③决定④⑤做什么，⑤⑥的结果又决定下一轮。kernel 优化只是③的一种，跟 tokenizer workers、调度策略、P:D 比、Mooncake 参数一视同仁，由②的证据决定先做哪个。
 
 ## 3. 概念模型
 
@@ -267,7 +268,9 @@ check_retries: 2
 
 - 扫描 `workspaces/*/*/results/**/*.json` 中 `schema` 以 `infera.result/` 开头的文件，按 mtime 缓存，请求时才算。
 - 基线：`project.yaml` 的 `ledger.baseline`（某个结果文件的路径）；没有配置时，取最新的一个 `role: baseline` 且有效的结果。
-- Δ = 主指标相对基线的百分比，方向由 `higher_is_better` 决定。最佳值只在有效且未被拒绝的结果里取。
+- Δ = 主指标相对基线的百分比，方向由 `higher_is_better` 决定。有基线系列时，带并发（`workload.conc`）的结果和基线系列同一并发的点比。最佳值只在我们自己（不含 `role: reference`）有效且未被拒绝的结果里取。
+- **曲线**：结果带 `round`（轮次）和 `series`（曲线名：`v0`、`r2-spf`、`ix:<条目>`）；`role: reference` 是别人的数（对标）。`ledger.x` 给出曲线的 X（模板默认 `p90_intvty`，Y 是主指标 `input_tput_per_gpu`），每个系列按 X 排序，标出前沿（同系列里没有别的点两个轴都不差）。`ledger.working_point` 是判 A/B 的工作点：`{conc: C}` 取该并发的点（多次取平均），`{x: X}` 取 X 不低于该值时的最大 Y（在前沿上相邻两点之间插值）；各系列在工作点的值相对基线系列（`ledger.baseline_series`）的 Δ 显示在台账页和看板头部。
+- AgentX 的 `agentx_conc<C>.json` 用 `python -m agent_sys_v2.ledger agentx <文件或目录> --out results --series v0 --round 1 --role baseline` 转成结果文件，指标名和算法与 InferenceX App 入库一致（交互性 = 1/p90 full-response ITL）。
 - schema 不对的文件不进表，在台账底部和任务卡片上列为"格式错误"。
 
 `infera.result/v1`（必填：`schema`、`label`、`metrics`）：
@@ -278,6 +281,8 @@ check_retries: 2
   "label": "c64-spf",
   "time": "2026-10-24T10:00:00Z",
   "role": "candidate",
+  "round": 1,
+  "series": "r1-spf",
   "change": "--schedule-policy shortest-prefill-first (decode/prefill both)",
   "metrics": {"tok_s_gpu": 14120.5, "p90_interactivity": 31.2, "ttft_p90_s": 2.1, "requests": 3120, "errors": 0},
   "workload": {"client": "agentx", "conc": 64, "duration_s": 3600, "seed": 42},
@@ -322,11 +327,21 @@ check_retries: 2
 
 | 类型 | 用途 | 默认检查 |
 |---|---|---|
-| `baseline` | 部署、过质量门、测基线，写 `role: baseline` 的结果 | report.md 非空；results 校验通过 |
-| `diagnose` | 多层分诊，写出带证据的假设清单，起草 experiment 子任务 | report.md 非空 |
-| `experiment` | 一个假设：改一个变量，证明杠杆生效，做 A/B，写带判定的结果 | results 校验通过，且有判定 |
+| `intake` | 每轮开头的问卷和 brief（`review: true`）；可写 campaign 的 `rules/project.md`、`project.yaml`、集群 skill | report.md 非空；`perfcheck intake` |
+| `survey` | 对标调研：InferenceX 参考曲线（`role: reference`）、配置差异表、合规清单；不占 GPU | report.md 非空；`perfcheck survey` |
+| `baseline` | 部署、过质量门、测 v0 曲线（`role: baseline`），噪声和快速验证标定，栈清单 | report.md、results、calibration.json、stack.json |
+| `profile` | 从便宜的层做起的瓶颈分析，产出 `candidates.yaml`（skill infera-profile；默认不用 ultracode） | report.md、candidates.yaml、profile.json |
+| `plan` | 候选排序、预算和机器分配，起草 experiment 子任务和 close（`review: true`） | report.md 非空；`perfcheck plan` |
+| `experiment` | 一个大杠杆或一组同层小杠杆：快速验证迭代，工作点单点 A/B，写带判定的结果 | results 校验通过，且有判定 |
+| `close` | 集成、整条曲线、封版、复盘，起草下一轮 intake；可写 `project.yaml` 的 version 和基线系列 | report.md；results；`perfcheck close` |
 | `develop` | 代码改动：补丁、router、kernel，出 PR 或 overlay | report.md 非空 |
 | `review` | 评审一个 PR、分支或结论（`review: true`） | — |
+
+`perfcheck`（`python -m agent_sys_v2.perfcheck <类型> <任务>`）是这个模板的字段检查：intake 查 project.yaml 的目标、机器、轮次、台账口径和工作点，rules/project.md 的占位，问卷，本轮要上机任务的机器；plan 查每个子任务的机器和 `expect`（预期 Δ、快速验证级别 L0–L5、证伪条件），以及等它子任务的 close；close 查 `stack.json`、封版时的曲线和 project.yaml，以及下一轮 intake 的草稿。一轮的做法、文件格式和问卷在模板自带的 campaign skill `infera-round` 里。
+
+两个通用机制让模板跑得起来：
+- **模板自带任务**：`templates/<模板>/tasks/<类型>/<名字>.md` 在建项目时原样复制并排队（`skills/` 也复制，成为 campaign 自己的 skill）。
+- **`children` 依赖**：`{task: X, kind: children}` 要等 X 完成，并且 `parent: X` 的任务全部完成或取消（草稿也算没完成；等待者自己和它的下游不计入）。看板上画成青色点划线，等待原因写"等待 X 的子任务：…"，agent 的首条消息列出 X 的子任务和它们的报告。"全部纳入托管"同时纳入 X 的子任务草稿和直接依赖 X 的草稿；草稿纳入托管时，frontmatter 没写的 `review` 和 `checks` 取类型的默认值。
 
 项目规则 `rules/project.md` 写这个 campaign 的背景（模型、引擎、kit、节点、负载、SLA），以及实验纪律：
 - 一次只改一个变量；
@@ -447,6 +462,6 @@ skills 的原则：
 
 | 优先级 | 内容 |
 |---|---|
-| P1 | 子任务全部完成后唤醒父任务（滚动规划）；通知（webhook / Slack），"有任务需要你"时推送；人的等待时间、返工率、按类型统计花费 |
-| P1 | skills 补全：`infera-sim`（模拟器作先验和剪枝）、`infera-patch`（补丁出货）、`infera-env`（预检）；引擎日志 parser 和 CPU profiling 脚本 |
-| P2 | 远端执行链加守护和事件唤醒的标准件（`run_chain.sh`）；台账的多指标 Pareto 视图；任务图模板（一键生成一轮实验） |
+| P1 | 子任务全部完成后唤醒父任务（滚动规划；目前由另一个任务用 `children` 依赖等待子任务，例如一轮的 close）；通知（webhook / Slack），"有任务需要你"时推送；人的等待时间、返工率、按类型统计花费 |
+| P1 | skills 补全：`infera-sim`（模拟器作先验和剪枝）、`infera-patch`（补丁出货）、`infera-env`（预检）；引擎日志 parser 和 CPU profiling 脚本；profile 工具（步长台架、kernel 分类、时间账、trace 开窗）和 `check_profile.py`；ATOM 的 profile playbook（从 ultracode profile 蒸馏，`skills/infera-profile/playbooks/atom.md` 已留位置）；SGLang/vLLM 的 AgentX 运行器 |
+| P2 | 远端执行链加守护和事件唤醒的标准件（`run_chain.sh`）；台账的多指标 Pareto 视图；任务图模板（建项目时预置第 1 轮已做；之后各轮由 intake 起草） |

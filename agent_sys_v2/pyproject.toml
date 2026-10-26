@@ -45,8 +45,8 @@ namespaces = false        # web/, templates/ and skills/ are package data (below
 [tool.setuptools.package-data]
 agent_sys_v2 = [
     "web/*", "web/vendor/*", "web/vendor/licenses/*",
-    "templates/*/*.yaml", "templates/*/*/*.md",
-    "skills/*.md", "skills/*/*.md", "skills/*/scripts/*.py",
+    "templates/*/*.yaml", "templates/*/*/*.md", "templates/*/*/*/*.md",
+    "skills/*.md", "skills/*/*.md", "skills/*/*/*.md", "skills/*/scripts/*.py",
 ]
 
 [tool.pytest.ini_options]

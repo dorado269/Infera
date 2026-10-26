@@ -219,7 +219,8 @@ function NewProject({ templates, first }) {
   return html`<form class="new-project" onSubmit=${create}>
     <div class="tmpl-list" role="radiogroup" aria-label=${t('模板')}>${templates.map((x) => html`<label class=${`tmpl ${tmpl === x.id ? 'on' : ''}`}>
       <input type="radio" name="tmpl" value=${x.id} checked=${tmpl === x.id} onChange=${() => setTmpl(x.id)} />
-      <b>${x.title}</b><span class="small muted">${x.description}</span><span class="small mono">${x.types.join(' · ')}</span></label>`)}</div>
+      <b>${x.title}</b><span class="small muted">${x.description}</span><span class="small mono">${x.types.join(' · ')}</span>
+      ${x.tasks?.length > 0 && html`<span class="small" title=${t('建项目时一起创建并排队；依赖让它们按顺序开始')}>${t('自带 {n} 个任务：', { n: x.tasks.length })}<span class="mono">${x.tasks.join(' · ')}</span></span>`}</label>`)}</div>
     <label class="field">${t('项目名称')}<input class="mono" value=${name} onInput=${(e) => setName(e.target.value)} placeholder=${t('例如 infera-perf-q4')} aria-invalid=${!!err} autofocus=${first} />
       ${err && html`<span class="error-text small">${err}</span>`}<span class="muted small">${t('将创建在')} <code>campaigns/${name || t('<项目名称>')}/</code></span></label>
     <button class="btn primary" type="submit" disabled=${busy || !name || !!err}>${t('创建项目')}</button>

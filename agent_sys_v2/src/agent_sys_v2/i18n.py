@@ -256,7 +256,7 @@ EN = {
     "checks 的第 {n} 项的 timeout 应为正数（秒）": "The timeout of item {n} of checks should be a positive number (seconds)",
     "agent_sys：Infera 性能工程的 agent 工作台": "agent_sys: an agent workbench for Infera performance engineering",
     "机器 {machines} 正被 {tasks} 占用：等它完成或取消，或修改本任务的机器": "Machines {machines} are held by {tasks}: wait for it to finish or be cancelled, or change this task's machines",
-    "没有待纳入托管的子任务草稿": "There are no draft subtasks to join",
+    "没有待纳入托管的草稿（子任务或直接依赖它的任务）": "There are no drafts to join (subtasks, or tasks that depend on it directly)",
     "machines 应为机器的列表": "machines should be a list of machines",
     "ledger 应为键值表（primary、higher_is_better、baseline）": "ledger should be a mapping (primary, higher_is_better, baseline)",
     "运行验收检查……": "Running the acceptance checks...",

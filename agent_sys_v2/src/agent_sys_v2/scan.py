@@ -315,17 +315,24 @@ def derive_details(project):
     """What a managed task waits for or is doing, worked out from the other files rather than stored in state.json
     (it would go stale): why a queued task has not started, the sub-state of a running one (runs.Monitor reads it
     from the run), and in_review's "read the report". A queued task waits, the first that holds: 项目已归档 >
-    阻塞类上游 > 已关闭自动开始 (and then for its machines and a slot, sched.plan)."""
+    阻塞类上游 > 上游的子任务 (children edges) > 已关闭自动开始 (and then for its machines and a slot, sched.plan)."""
     for t in project.tasks.values():
         if not t.managed:
             continue
         if t.status == "queued":
             upstream = project.waiting_on(t.id)
+            children = project.waiting_on_children(t.id) if not upstream else {}
             t.detail = (
                 {"kind": "archived"}
                 if project.archived
                 else {"kind": "upstream", "tasks": upstream}
                 if upstream
+                else {
+                    "kind": "children",
+                    "parents": list(children),
+                    "tasks": [c for pending in children.values() for c in pending],
+                }
+                if children
                 else {"kind": "manual"}
                 if project.config.get("autorun", True) is False
                 else {}

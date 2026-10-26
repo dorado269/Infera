@@ -2,9 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { statusLine, mentionAt, mentionOptions, insertMention } from '../ui.js';
-import { layout, edgePaths, laneAt, moveLane, dateRange, inDates, visibleTasks } from '../board.js';
-import { fmt, deltaText, ticks, timeTicks, bestSoFar, decisionOf } from '../ledger.js';
+import { statusLine, mentionAt, mentionOptions, insertMention, EDGE_KINDS, BLOCKING } from '../ui.js';
+import { layout, edgePaths, laneAt, moveLane, dateRange, inDates, visibleTasks, childrenDone } from '../board.js';
+import { fmt, deltaText, ticks, timeTicks, bestSoFar, decisionOf, seriesColor, wpText, spreadLabels } from '../ledger.js';
 import { parseMachines, machinesText } from '../ui.js';
 import { depsOf, depEntries } from '../task.js';
 import { fold, Folder, LiveStrip } from '../run.js';
@@ -255,4 +255,37 @@ test('machines as the settings form edits them', () => {
   assert.deepEqual(list, [{ name: 'smc-a16-19', gpus: 8, note: 'MI300X node' }, { name: 'smc-a16-20' }, { name: 'box', gpus: 4 }]);
   assert.equal(machinesText(list), 'smc-a16-19 8 MI300X node\nsmc-a16-20\nbox 4');
   assert.equal(machinesText(['a', { name: 'b', gpus: 2 }]), 'a\nb 2');
+});
+
+test('children: the wait reason, the edge kind, and how many subtasks are finished', () => {
+  const titles = { 'plan/r1': '计划' };
+  assert.equal(statusLine({ status: 'queued', detail: { kind: 'children', parents: ['plan/r1'], tasks: ['experiment/a', 'experiment/b'] } }, (id) => titles[id] || id),
+    '等待 计划 的子任务：experiment/a、experiment/b');
+  assert.ok(BLOCKING.has('children') && EDGE_KINDS.children.label === '等子任务');
+  const tasks = [
+    { id: 'experiment/a', parent: 'plan/r1', status: 'done' },
+    { id: 'experiment/b', parent: 'plan/r1', status: 'cancelled' },
+    { id: 'experiment/c', parent: 'plan/r1', status: 'draft' },
+    { id: 'close/r1', parent: 'plan/r1', status: 'queued' },  // the waiting task itself does not count
+    { id: 'other/x', parent: 'plan/r2', status: 'queued' },
+  ];
+  assert.deepEqual(childrenDone(tasks, 'plan/r1', 'close/r1'), { done: 2, total: 3 });
+});
+
+test('ledger curves: a series keeps its color, the working point in words, end labels kept apart', () => {
+  assert.equal(seriesColor(0), 'var(--series-1)');
+  assert.equal(seriesColor(7), 'var(--series-8)');
+  assert.equal(seriesColor(8), 'var(--ink-3)');  // past the eight slots: gray, never a made-up hue
+  assert.equal(wpText({ x: 30 }, 'p90_intvty'), 'p90_intvty ≥ 30');
+  assert.equal(wpText({ conc: 64 }, 'p90_intvty'), 'C64');
+  assert.equal(wpText({}, 'p90_intvty'), '');
+  assert.deepEqual(spreadLabels([{ name: 'b', y: 105 }, { name: 'a', y: 100 }, { name: 'c', y: 200 }]).map((l) => [l.name, l.y]),
+    [['a', 100], ['b', 114], ['c', 200]]);
+  // a reference is never the best so far
+  const rows = [
+    { value: 100, time: '2026-10-01T00:00:00Z', status: 'valid', decision: '', role: 'baseline' },
+    { value: 900, time: '2026-10-02T00:00:00Z', status: 'valid', decision: '', role: 'reference' },
+    { value: 120, time: '2026-10-03T00:00:00Z', status: 'valid', decision: 'accept', role: 'candidate' },
+  ];
+  assert.deepEqual(bestSoFar(rows, 1).map((s) => s.v), [100, 120]);
 });

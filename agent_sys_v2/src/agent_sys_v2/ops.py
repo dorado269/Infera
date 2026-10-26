@@ -16,6 +16,7 @@ from .model import (
     BLOCKING,
     EDGE_KINDS,
     GLOBAL_DEFAULTS,
+    NAME,
     PROJECT_DEFAULTS,
     AgentSysError,
     blocking_graph,
@@ -322,7 +323,9 @@ def update_task(pdir, tid, frontmatter=None, prompt=None, base_mtime=""):
 
 def join(pdir, tid):
     """纳入托管: 草稿 -> 待开始; progress 已完成 -> 已完成 (review: true -> 待审核);
-    any other progress -> 待确认 (detail joined: confirm the terminal session has ended first)."""
+    any other progress -> 待确认 (detail joined: confirm the terminal session has ended first).
+    A draft without review or checks in its frontmatter gets its type's defaults, as a task made in the UI does:
+    a draft an agent wrote (a plan's experiments) is held to the same acceptance checks."""
     project = load_project(pdir)
     check_not_archived(project)
     t = project.task(tid)
@@ -330,6 +333,21 @@ def join(pdir, tid):
         raise AgentSysError(_("任务「{task}」已纳入托管", task=t.title), 409)
     p = t.progress
     if p is None:
+        ty = next((ty for ty in project.types if ty.id == t.type), None)
+        if ty and (("review" not in t.fm and ty.review) or ("checks" not in t.fm and ty.checks)):
+
+            def defaults(fm):
+                if "review" not in fm and ty.review:
+                    fm["review"] = True
+                if "checks" not in fm and ty.checks:
+                    fm["checks"] = ty.checks
+
+            try:
+                update_frontmatter(t.path, defaults)
+            except (
+                AgentSysError
+            ):  # a frontmatter that cannot be parsed: joined as it is (it shows a reminder)
+                pass
         state = new_state("queued", created=t.created)
     elif p.done:
         status = "in_review" if t.status == "in_review" else "done"
@@ -346,14 +364,25 @@ def join(pdir, tid):
     return load_project(pdir).tasks[tid]
 
 
+def drafts_of(project, tid):
+    """The drafts tid wrote: those whose parent it is, and those that depend on it directly (a plan's close task,
+    which waits for the plan's subtasks without being one). Review edges do not count."""
+    direct = {e.down for e in project.downstream(tid) if e.kind != "review"}
+    return [
+        t.id
+        for t in project.tasks.values()
+        if t.status == "draft" and (t.parent == tid or t.id in direct)
+    ]
+
+
 def join_children(pdir, tid):
-    """全部纳入托管: join every draft whose parent is tid (the plan an agent wrote as drafts, approved at once).
+    """全部纳入托管: join every draft tid wrote (drafts_of: the plan an agent wrote as drafts, approved at once).
     Returns the ids joined."""
     project = load_project(pdir)
     project.task(tid)
-    drafts = [t.id for t in project.tasks.values() if t.parent == tid and t.status == "draft"]
+    drafts = drafts_of(project, tid)
     if not drafts:
-        raise AgentSysError(_("没有待纳入托管的子任务草稿"), 409)
+        raise AgentSysError(_("没有待纳入托管的草稿（子任务或直接依赖它的任务）"), 409)
     for child in drafts:
         join(pdir, child)
     return drafts
@@ -654,9 +683,18 @@ def init_home(home):
     return made
 
 
+def template_tasks(src):
+    """The tasks a template brings, tasks/<type>/<name>.md, as [type/name]."""
+    return sorted(
+        f"{f.parent.name}/{f.stem}"
+        for f in (Path(src) / "tasks").glob("*/*.md")
+        if not f.name.startswith(".") and NAME.fullmatch(f.parent.name) and NAME.fullmatch(f.stem)
+    )
+
+
 def list_templates(templates_dir=TEMPLATES):
-    """[{id, title, description, types: [{id, review, skeleton}]}] for templates/<id>/ (templates/_common is
-    shared, not a template)."""
+    """[{id, title, description, types: [{id, review, skeleton}], tasks: [type/name]}] for templates/<id>/
+    (templates/_common is shared, not a template)."""
     out = []
     for d in sorted(Path(templates_dir).iterdir()):
         if d.is_dir() and not d.name.startswith(("_", ".")):
@@ -673,15 +711,18 @@ def list_templates(templates_dir=TEMPLATES):
                     "title": config.get("title") or d.name,
                     "description": str(config.get("description") or ""),
                     "types": types,
+                    "tasks": template_tasks(d),
                 }
             )
     return out
 
 
 def new_project(home, name, template="blank", title=None, templates_dir=TEMPLATES):
-    """New project = copy the template's rules/, knowledge/, task_types/ + project.yaml with the
-    title filled in + tasks/<type>/ for every type. The agent_sys protocol is not copied: M2 injects it from the
-    code at every run, so that it follows agent_sys's version.
+    """New project = copy the template's rules/, knowledge/, task_types/, skills/ + project.yaml with the
+    title filled in + tasks/<type>/ for every type. The tasks the template brings (tasks/<type>/<name>.md, e.g. the
+    first round of a campaign) are copied too and queued, each with a state.json of its own: their depends_on keeps
+    all but the first waiting. The agent_sys protocol is not copied: M2 injects it from the code at every run, so
+    that it follows agent_sys's version.
     Built in a hidden directory and renamed into place, so a failure leaves nothing half made."""
     check_name(name, _("项目名"))
     templates_dir = Path(templates_dir)
@@ -694,7 +735,7 @@ def new_project(home, name, template="blank", title=None, templates_dir=TEMPLATE
     tmp = dst.with_name(f".{name}.new")
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True)
-    for sub in ("rules", "knowledge", "task_types"):
+    for sub in ("rules", "knowledge", "task_types", "skills"):
         if (src / sub).is_dir():
             shutil.copytree(src / sub, tmp / sub)
     (tmp / "rules").mkdir(exist_ok=True)
@@ -713,5 +754,9 @@ def new_project(home, name, template="blank", title=None, templates_dir=TEMPLATE
     for skeleton in (tmp / "task_types").glob("*.md"):
         (tmp / "tasks" / skeleton.stem).mkdir(parents=True)
     (tmp / "workspaces").mkdir()
+    for tid in template_tasks(src):
+        (tmp / "tasks" / tid).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src / "tasks" / f"{tid}.md", tmp / "tasks" / f"{tid}.md")
+        write_state(tmp / "workspaces" / tid, new_state("queued"))
     tmp.rename(dst)
     return dst

@@ -136,6 +136,13 @@ function rounded(pts, r = 8) {
   return `${d} L${last.x},${last.y}`;
 }
 
+// The subtasks of parent that a children edge into waiter waits for (the waiter itself left out): {done, total}, done
+// counting the cancelled ones too.
+export function childrenDone(tasks, parent, waiter) {
+  const kids = tasks.filter((t) => t.parent === parent && t.id !== waiter);
+  return { done: kids.filter((t) => ['done', 'cancelled'].includes(t.status)).length, total: kids.length };
+}
+
 // Everything a task depends on and everything that depends on it, along the edges on display
 // (review edges excluded, as in the prototype).
 function lineage(id, edges) {
@@ -179,7 +186,7 @@ export function BoardPage({ pid, onNewTask }) {
   const selected = (parseHash().params.t || '').startsWith(`${pid}/`) ? parseHash().params.t.slice(pid.length + 1) : '';
   // every kind but 评审覆盖 is drawn unless the legend says otherwise
   const [view, setView] = useState({ q: '', statuses: new Set(), hiddenTypes: new Set(), collapse: null, window: null,
-    from: '', to: '', kinds: new Set(['input', 'code', 'subtask']), zoom: 1 });
+    from: '', to: '', kinds: new Set(['input', 'code', 'children', 'subtask']), zoom: 1 });
   const set = (patch) => setView((v) => ({ ...v, ...patch }));
 
   if (error && !data) {
@@ -440,7 +447,9 @@ function Canvas({ pid, types, tasks, edges, view, selected, collapse, byId, onNe
   const open = (id) => go(id === selected ? hrefWith({ t: null, tab: null, file: null, run: null }) : taskHref(pid, id));
   const edgeTip = (e) => {
     const from = byId.get(e.from)?.title || e.from, to = byId.get(e.to)?.title || e.to;
-    return { title: `${from} → ${to}`, lines: [EDGE_KINDS[e.kind]?.label, e.label, e.evidence && e.evidence !== e.label ? tr('prompt 原文：{evidence}', { evidence: e.evidence }) : '',
+    const kids = e.kind === 'children' ? childrenDone(tasks, e.from, e.to) : null;
+    return { title: `${from} → ${to}`, lines: [EDGE_KINDS[e.kind]?.label, kids && tr('{task} 的子任务：{done}/{total} 已完成或取消', { task: from, ...kids }),
+      e.label, e.evidence && e.evidence !== e.label ? tr('prompt 原文：{evidence}', { evidence: e.evidence }) : '',
       e.source === 'prompt' ? tr('来源：prompt 中引用的任务路径') : tr('来源：下游任务 frontmatter 中的 depends_on')].filter(Boolean) };
   };
 
@@ -505,7 +514,7 @@ function Canvas({ pid, types, tasks, edges, view, selected, collapse, byId, onNe
         <div class=${`canvas-inner ${drag ? 'dragging' : ''}`} style=${{ width: `${L.width}px`, height: `${L.height}px`, transform: `scale(${zoom})` }}
           onClick=${(ev) => { if (!dragged.current && (ev.target === ev.currentTarget || ev.target.tagName === 'svg') && selected) go(hrefWith({ t: null, tab: null, file: null, run: null })); }}>
           <svg width=${L.width} height=${L.height} class="graph">
-            <defs>${['input', 'code', 'review', 'subtask'].map((k) => html`
+            <defs>${Object.keys(EDGE_KINDS).map((k) => html`
               <marker id=${`arrow-${k}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto">
                 <path d="M0,1 L10,5 L0,9 z" class=${`arrow ${k}`} /></marker>`)}</defs>
             <text x="12" y="27" class="lane-title">${tr('开始日期')}</text>

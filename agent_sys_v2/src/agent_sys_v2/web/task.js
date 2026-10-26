@@ -108,7 +108,8 @@ function Header({ pid, t, head, close }) {
     t.managed && !['cancelled', 'done'].includes(t.status) && [tr('取消任务'), () => setDialog('cancel')],
     [tr('删除任务'), () => setDialog('delete')],
   ].filter(Boolean);
-  const drafts = t.downstream.filter((d) => d.kind === 'subtask' && d.status === 'draft').map((d) => ({ id: d.task, title: d.title }));
+  const drafts = t.downstream.filter((d) => d.kind !== 'review' && d.status === 'draft')  // its subtasks and the drafts that depend on it (ops.drafts_of)
+    .map((d) => ({ id: d.task, title: d.title }));
   const c = t.progress?.checks || {};
   const checks = { done: c.done || 0, total: (c.done || 0) + (c.doing || 0) + (c.todo || 0) };
   const elapsed = t.since && t.status !== 'draft'
@@ -137,8 +138,8 @@ function Header({ pid, t, head, close }) {
       ${t.checks && html`<a class=${`small ${t.checks.ok ? 'ok-text' : 'warn-text'}`} href=${taskHref(pid, t.id, { tab: 'docs', file: CHECKS })}
         title=${tr('最近一轮的验收检查（第 {n} 次）', { n: t.checks.attempts })}>${t.checks.ok ? '✓' : '✗'} ${tr('验收 {passed}/{total}', t.checks)}</a>`}
     </div>
-    ${drafts.length > 0 && html`<div class="notice drafts"><${Icon} name="draft" /><div>${tr('这个任务起草了 {n} 个子任务：{titles}', { n: drafts.length, titles: drafts.map((d) => d.title).join(tr('、')) })}
-      <button class="btn small primary" disabled=${busy} onClick=${guard(() => act('join_children', {}, tr('已纳入托管 {n} 个子任务', { n: drafts.length })))}>${tr('全部纳入托管')}</button></div></div>`}
+    ${drafts.length > 0 && html`<div class="notice drafts"><${Icon} name="draft" /><div>${tr('这个任务起草了 {n} 个任务：{titles}', { n: drafts.length, titles: drafts.map((d) => d.title).join(tr('、')) })}
+      <button class="btn small primary" disabled=${busy} onClick=${guard(() => act('join_children', {}, tr('已纳入托管 {n} 个任务', { n: drafts.length })))}>${tr('全部纳入托管')}</button></div></div>`}
     <div class="head-actions">
       ${b.map(([style, label, fn]) => style === 'budget' ? html`<${BudgetButton} pid=${pid} t=${t} />`
         : style === 'terminal' ? html`<button class="btn" onClick=${guard(fn)} disabled=${busy}><${Icon} name="terminal" />${label}</button>`

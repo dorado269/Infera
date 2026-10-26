@@ -52,7 +52,13 @@ def settings_json(cfg):
     )
 
 
-KIND_ZH = {"input": "产出依赖", "code": "代码基线", "review": "评审覆盖", "subtask": "父任务"}
+KIND_ZH = {
+    "input": "产出依赖",
+    "code": "代码基线",
+    "children": "等它和它的子任务完成",
+    "review": "评审覆盖",
+    "subtask": "父任务",
+}
 # What agent_sys tells the agent (system.md, the first message, messages into its session) in protocol_language: written
 # in Chinese and looked up here for en, as i18n.EN does for what people see.
 AGENT_EN = {
@@ -79,6 +85,9 @@ AGENT_EN = {
     "代码基线": "code baseline",
     "评审覆盖": "review coverage",
     "父任务": "parent task",
+    "等它和它的子任务完成": "after it and its subtasks",
+    "  它的子任务：": "  Its subtasks:",
+    "  - {title}（`{task}`，{status}）：{report}": "  - {title} (`{task}`, {status}): {report}",
     "报告 `workspaces/{task}/{report}`": "report `workspaces/{task}/{report}`",
     "还没有 report.md": "no report.md yet",
     "- {title}（`{task}`，{kind}）：工作区 `workspaces/{task}/`，{report}": "- {title} (`{task}`, {kind}): workspace `workspaces/{task}/`, {report}",
@@ -287,6 +296,25 @@ def upstream_lines(project, task, lang="zh"):
             lines += [f"  - {h['text']}" for h in up.handoff[:HANDOFF_LINES]]
             if len(up.handoff) > HANDOFF_LINES:
                 lines.append("  - " + say(lang, "……（共 {n} 条，其余见报告）", n=len(up.handoff)))
+        if e.kind == "children" and (kids := [c for c in project.children(up.id) if c != task.id]):
+            # what a round's close task integrates: the plan's subtasks, each with its report
+            lines.append(say(lang, "  它的子任务："))
+            for c in map(project.tasks.get, kids):
+                reports = report_files(c.workspace)
+                lines.append(
+                    say(
+                        lang,
+                        "  - {title}（`{task}`，{status}）：{report}",
+                        title=c.title,
+                        task=c.id,
+                        status=c.status,
+                        report=say(
+                            lang, "报告 `workspaces/{task}/{report}`", task=c.id, report=reports[0]
+                        )
+                        if reports
+                        else say(lang, "还没有 report.md"),
+                    )
+                )
     return lines
 
 
