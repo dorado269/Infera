@@ -1,6 +1,5 @@
-// Project board: lanes (task types) × start-time rows, the DAG between tasks, the three attention
-// panels above it and the task table below. Layout and edge routing come from the prototype's
-// watchboard board.js, with variable row heights for collapsed cards and a draft band at the bottom.
+// Project board: lanes (task types) × rows in the order the tasks run, the DAG between tasks, the three attention
+// panels above it and the task table below. Where cards go and how edges run between them is in graph.js.
 import { useState, useEffect, useRef, useMemo } from './vendor/hooks.module.js';
 import { api, paths } from './api.js';
 import { html, Icon, StatusMark, STATUS, STATUS_ORDER, EDGE_KINDS, statusLine, useApi, useNow, money, ago, since,
@@ -9,15 +8,11 @@ import { NeedsCard, ReviewCard, MarkAllRead, resumeAll, interruptedOf } from './
 import { confirmMove } from './task.js';
 import { t as tr } from './i18n.js';
 import { LedgerChips, deltaText } from './ledger.js';
+import { NODE_W, laneX, laneAt, layout, edgePaths, runOrder, redundant } from './graph.js';
 
-// ---------------------------------------------------------------- layout (from the prototype)
+// ---------------------------------------------------------------- layout (graph.js)
 
-const NODE_W = 248, NODE_H = 76, COMPACT_H = 30, LANE_GAP = 72, LAYER_GAP = 34, COMPACT_GAP = 14, MARGIN_X = 56, HEADER_H = 40, AXIS_W = 52;
-const laneX = (col) => AXIS_W + MARGIN_X + col * (NODE_W + LANE_GAP);
-const dayOf = (iso) => (iso ? new Date(iso).toLocaleDateString('sv').slice(5) : '');  // local MM-DD
-
-// The lane (column index among n) under x on the canvas, for a card or a lane title dropped there.
-export const laneAt = (x, n) => Math.max(0, Math.min(n - 1, Math.floor((x - laneX(0) + LANE_GAP / 2) / (NODE_W + LANE_GAP))));
+export { layout, edgePaths, laneAt, runOrder, redundant } from './graph.js';
 
 // All the lanes after moving the shown lane at index `from` to index `to` among the shown ones; hidden lanes keep
 // their places.
@@ -26,148 +21,6 @@ export function moveLane(all, shown, from, to) {
   moved.splice(to, 0, ...moved.splice(from, 1));
   let i = 0;
   return all.map((id) => (shown.includes(id) ? moved[i++] : id));
-}
-
-// The order the tasks run in: each task with its time, the start, or for one not started yet its creation but no
-// earlier than its upstream tasks' times (it cannot start before them), so a task never comes before the tasks it
-// waits for. Equal times (a template's tasks are made at once) go by how deep the task is in the graph, then by lane.
-// Drafts ("~…") come after every date. Returns {order: [task], when: (id) => time}.
-export function runOrder(tasks, edges, laneIds) {
-  const byId = new Map(tasks.map((t) => [t.id, t]));
-  const ups = new Map();
-  for (const e of edges) if (e.from !== e.to && byId.has(e.from) && byId.has(e.to)) ups.set(e.to, [...(ups.get(e.to) || []), e.from]);
-  const memo = (f) => {  // f(id, rec) over the upstream tasks; a cycle is cut where it closes
-    const done = new Map(), open = new Set();
-    const rec = (id) => {
-      if (done.has(id)) return done.get(id);
-      if (open.has(id)) return null;
-      open.add(id);
-      const v = f(id, rec);
-      open.delete(id);
-      done.set(id, v);
-      return v;
-    };
-    return rec;
-  };
-  const when = memo((id, rec) => {
-    const t = byId.get(id), draft = t.status === 'draft';
-    let k = t.started || t.created || '';
-    // a task that is not a draft does not wait for a draft's time
-    if (!t.started) for (const u of ups.get(id) || []) if (draft || byId.get(u).status !== 'draft') k = [k, (rec(u) || '').replace(/^~/, '')].sort()[1];
-    return draft ? `~${k}` : k;
-  });
-  const depth = memo((id, rec) => Math.max(-1, ...(ups.get(id) || []).map((u) => rec(u) ?? -1)) + 1);
-  const cmp = (a, b) => (a > b) - (a < b);
-  const order = [...tasks].sort((a, b) => cmp(when(a.id), when(b.id)) || depth(a.id) - depth(b.id)
-    || laneIds.indexOf(a.type) - laneIds.indexOf(b.type) || cmp(a.id, b.id));
-  return { order, when };
-}
-
-// Rows follow runOrder, top to bottom; each lane is a column: the first task top left, the last bottom right. A task
-// goes on the current row unless its lane is taken there, its time is on a later day, or it is linked to a task on that
-// row, so every edge spans rows. Drafts have no start: they get their own rows at the bottom (the draft band). An edge
-// from a task that started later points up. edges: all of them, also the kinds the board hides, so hiding a kind does
-// not move the cards.
-export function layout(tasks, edges, laneIds, compact) {
-  const { order, when } = runOrder(tasks, edges, laneIds);
-  const layer = new Map(), laneRow = new Map(), rows = [];  // rows[i]: {day, draft}
-  for (const t of order) {
-    const row = rows.length - 1, draft = t.status === 'draft', day = draft ? '草稿' : dayOf(when(t.id));  // i18n: not shown (the drafts band has no day label)
-    const linked = edges.some((e) => (e.to === t.id && layer.get(e.from) === row) || (e.from === t.id && layer.get(e.to) === row));
-    const l = row < 0 || day !== rows[row].day || laneRow.get(t.type) === row || linked ? row + 1 : row;
-    if (l > row) rows.push({ day, draft });
-    layer.set(t.id, l);
-    laneRow.set(t.type, l);
-  }
-  const heights = rows.map(() => COMPACT_H);
-  for (const t of tasks) if (!compact.has(t.id)) heights[layer.get(t.id)] = NODE_H;
-  const tops = [];
-  let y = HEADER_H;
-  rows.forEach((r, i) => {
-    if (r.draft && !rows[i - 1]?.draft) y += 28;  // room for the draft band's title
-    tops.push(y);
-    // collapsed rows sit closer, unless an edge needs the gap below them to turn
-    y += heights[i] + (heights[i] === COMPACT_H && heights[i + 1] === COMPACT_H ? COMPACT_GAP : LAYER_GAP);
-  });
-  const pos = new Map();
-  for (const t of tasks) {
-    const l = layer.get(t.id);
-    const above = l ? tops[l] - tops[l - 1] - heights[l - 1] : LAYER_GAP, below = l < rows.length - 1 ? tops[l + 1] - tops[l] - heights[l] : LAYER_GAP;
-    pos.set(t.id, { x: laneX(laneIds.indexOf(t.type)), y: tops[l], w: NODE_W, h: compact.has(t.id) ? COMPACT_H : NODE_H, rowH: heights[l], layer: l, above, below });
-  }
-  const draftRow = rows.findIndex((r) => r.draft);
-  return { pos, rows: rows.map((r, i) => ({ ...r, y: tops[i], h: heights[i] })), draftTop: draftRow < 0 ? null : tops[draftRow] - 22,
-    width: laneX(Math.max(laneIds.length, 1) - 1) + NODE_W + MARGIN_X, height: Math.max(y, 320) };  // room for the empty state
-}
-
-// Edge routes, chosen so an edge never cuts through a card (prototype rules):
-//   down  next row: bottom to top;  side  same lane, down past other rows: round the right side;
-//   gap   other lane, down past rows: down the lane gap, across above the target's row, into its top;
-//   up    other lane, pointing up: up the gap, across below the target's row, into its bottom;
-//   back  same lane, pointing up: round the left side.
-export function edgePaths(edges, pos) {
-  const route = (e) => {
-    const a = pos.get(e.from), b = pos.get(e.to);
-    if (b.layer < a.layer) return a.x === b.x ? 'back' : 'up';
-    if (b.layer - a.layer === 1) return 'down';
-    return a.x === b.x ? 'side' : 'gap';
-  };
-  const sides = (e) => {
-    const across = pos.get(e.to).x > pos.get(e.from).x ? 'right' : 'left';
-    return { down: ['bottom', 'top'], side: ['right', 'right'], gap: [across, 'top'], up: [across, 'bottom'], back: ['left', 'left'] }[route(e)];
-  };
-  const ports = new Map();
-  const add = (key, e) => { if (!ports.has(key)) ports.set(key, []); ports.get(key).push(e); };
-  for (const e of edges) {
-    const [out, into] = sides(e);
-    add(`${e.from}|${out}`, e);
-    add(`${e.to}|${into}`, e);
-  }
-  const other = (e, id) => pos.get(e.from === id ? e.to : e.from);
-  for (const [key, list] of ports) {
-    const id = key.split('|')[0];
-    list.sort((p, q) => other(p, id).x - other(q, id).x || other(p, id).y - other(q, id).y);
-  }
-  const port = (id, side, e) => {
-    const p = pos.get(id), list = ports.get(`${id}|${side}`), i = list.indexOf(e), n = list.length;
-    if (side === 'top' || side === 'bottom') return { x: p.x + (p.w * (i + 1)) / (n + 1), y: side === 'top' ? p.y : p.y + p.h };
-    return { x: side === 'left' ? p.x : p.x + p.w, y: p.y + p.h / 2 + (i - (n - 1) / 2) * 8 };
-  };
-  const gapX = (e) => pos.get(e.from).x + (sides(e)[0] === 'right' ? NODE_W + LANE_GAP / 2 : -LANE_GAP / 2);
-  const tracks = new Map();
-  for (const e of edges.filter((x) => ['gap', 'up'].includes(route(x)))) {
-    if (!tracks.has(gapX(e))) tracks.set(gapX(e), []);
-    tracks.get(gapX(e)).push(e);
-  }
-  const track = (e) => { const list = tracks.get(gapX(e)); return (list.indexOf(e) - (list.length - 1) / 2) * 8; };
-  return edges.map((e) => {
-    const r = route(e), [out, into] = sides(e), a = port(e.from, out, e), b = port(e.to, into, e), tb = pos.get(e.to);
-    if (r === 'down') {
-      const dy = (b.y - a.y) / 2;
-      return `M${a.x},${a.y} C${a.x},${a.y + dy} ${b.x},${b.y - dy} ${b.x},${b.y}`;
-    }
-    if (r === 'gap' || r === 'up') {
-      const off = track(e), x = gapX(e) + off;
-      const y = r === 'gap' ? b.y - tb.above / 2 + off / 4 : tb.y + tb.rowH + tb.below / 2 + off / 4;
-      return rounded([a, { x, y: a.y }, { x, y }, { x: b.x, y }, b]);
-    }
-    const span = Math.abs(tb.layer - pos.get(e.from).layer);
-    const bulge = (r === 'side' ? 1 : -1) * Math.min(LANE_GAP - 16, MARGIN_X - 10, 22 + 6 * span);
-    return `M${a.x},${a.y} C${a.x + bulge},${a.y} ${b.x + bulge},${b.y} ${b.x},${b.y}`;
-  });
-}
-
-function rounded(pts, r = 8) {
-  let d = `M${pts[0].x},${pts[0].y}`;
-  for (let i = 1; i < pts.length - 1; i++) {
-    const [a, p, b] = [pts[i - 1], pts[i], pts[i + 1]];
-    const la = Math.hypot(a.x - p.x, a.y - p.y), lb = Math.hypot(b.x - p.x, b.y - p.y);
-    if (!la || !lb) continue;
-    const ra = Math.min(r, la / 2) / la, rb = Math.min(r, lb / 2) / lb;
-    d += ` L${p.x + (a.x - p.x) * ra},${p.y + (a.y - p.y) * ra} Q${p.x},${p.y} ${p.x + (b.x - p.x) * rb},${p.y + (b.y - p.y) * rb}`;
-  }
-  const last = pts[pts.length - 1];
-  return `${d} L${last.x},${last.y}`;
 }
 
 // The subtasks of parent that a children edge into waiter waits for (the waiter itself left out): {done, total}, done
@@ -262,7 +115,7 @@ export function BoardPage({ pid, onNewTask }) {
     ${machines.length > 0 && html`<${MachineStrip} machines=${machines} pid=${pid} />`}
     ${tasks.length > 0 && html`<${Attention} pid=${pid} tasks=${tasks} titleOf=${titleOf} />`}
     <${Toolbar} view=${v} set=${set} types=${types} tasks=${tasks} collapse=${collapse} />
-    <${Canvas} pid=${pid} types=${types} tasks=${tasks} edges=${edges} view=${v}
+    <${Canvas} pid=${pid} types=${types} tasks=${tasks} edges=${edges} view=${v} set=${set}
       selected=${selected} collapse=${collapse} byId=${byId} onNewTask=${project.archived ? null : onNewTask} />
     <${TaskTable} pid=${pid} tasks=${tasks} edges=${edges} view=${v} titleOf=${titleOf} selected=${selected}
       tagUnmanaged=${tasks.some((t) => t.managed)} />
@@ -429,6 +282,8 @@ function Toolbar({ view, set, types, tasks, collapse }) {
       <summary class="btn small">${tr('视图')}${collapse ? tr('：折叠已完成，') : tr('：')}${Math.round(view.zoom * 100)}%</summary>
       <div class="view-body">
         <label class="check"><input type="checkbox" checked=${collapse} onChange=${(e) => set({ collapse: e.target.checked })} />${tr('折叠已完成')}</label>
+        <label class="check" title=${tr('A→B→C 已经表明 C 在 A 之后，A→C 这条线就不画了；依赖本身不变，任务详情里仍然列出')}>
+          <input type="checkbox" checked=${!view.implied} onChange=${(e) => set({ implied: !e.target.checked })} />${tr('省略可由其他依赖推出的线')}</label>
         <div class="zoom" role="group" aria-label=${tr('缩放')}><span class="muted small">${tr('缩放')}</span>
           <button class="btn small icon-only" onClick=${() => zoomTo(view.zoom - 0.1)} aria-label=${tr('缩小')}>−</button>
           <button class="btn small ghost" onClick=${() => zoomTo(1)} title=${tr('恢复为 100%')}>${Math.round(view.zoom * 100)}%</button>
@@ -472,7 +327,7 @@ function matches(t, q) {
 
 // ---------------------------------------------------------------- canvas
 
-function Canvas({ pid, types, tasks, edges, view, selected, collapse, byId, onNewTask }) {
+function Canvas({ pid, types, tasks, edges, view, set, selected, collapse, byId, onNewTask }) {
   const now = useNow(1000);
   const scroller = useRef();
   const [tip, setTip] = useState(null);
@@ -487,8 +342,12 @@ function Canvas({ pid, types, tasks, edges, view, selected, collapse, byId, onNe
   const { shown, compact, hidden } = useMemo(() => visibleTasks(tasks, edges, view, collapse, Date.now()), [tasks, edges, view, collapse]);
   const shownIds = new Set(shown.map((t) => t.id));
   const visEdges = edges.filter((e) => view.kinds.has(e.kind) && shownIds.has(e.from) && shownIds.has(e.to));
-  const L = useMemo(() => layout(shown, edges, laneIds, compact), [shown, edges, laneIds.join(), compact]);
-  const ds = edgePaths(visEdges, L.pos);
+  // edges another path already implies are left out unless 视图 says to draw every edge (rows stay the same)
+  const implied = redundant(visEdges);
+  const drawn = view.implied ? visEdges : visEdges.filter((e) => !implied.has(e));
+  const drawnKey = drawn.map((e) => `${e.from}>${e.to}:${e.kind}`).join();
+  const L = useMemo(() => layout(shown, edges, laneIds, compact, drawn), [shown, edges, drawnKey, laneIds.join(), compact]);
+  const ds = useMemo(() => edgePaths(drawn, L.pos), [drawnKey, L]);
   const lin = selected && byId.has(selected) ? lineage(selected, visEdges) : null;
   const related = (id) => !lin || id === selected || lin.up.has(id) || lin.down.has(id);
   const onPath = (e) => lin && (e.kind === 'review' ? e.from === selected || e.to === selected
@@ -566,8 +425,11 @@ function Canvas({ pid, types, tasks, edges, view, selected, collapse, byId, onNe
   };
 
   return html`<section class="canvas-wrap" aria-label=${tr('任务依赖图')}>
-    ${(hidden > 0 || view.q) && html`<div class="filter-note muted small">
+    ${(hidden > 0 || view.q || implied.size > 0) && html`<div class="filter-note muted small">
       ${hidden > 0 && html`<span>${tr('已按筛选条件隐藏 {n} 个任务。', { n: hidden })}</span>`}
+      ${implied.size > 0 && html`<span title=${tr('A→B→C 已经表明 C 在 A 之后，A→C 这条线就不画了；依赖本身不变，任务详情里仍然列出')}>${view.implied
+        ? tr('显示全部 {n} 条依赖线。', { n: visEdges.length }) : tr('省略了 {n} 条可由其他依赖推出的线。', { n: implied.size })}
+        <button class="btn ghost tiny" onClick=${() => set({ implied: !view.implied })}>${view.implied ? tr('精简') : tr('全部显示')}</button></span>`}
       ${view.q && html`<span>${tr('「{q}」匹配 {n} 个任务', { q: view.q, n: hits.length })}${hits.length ? html`${tr('：')}${hits.slice(0, 6).map((t) => html`<a href=${taskHref(pid, t.id)}>${t.title}</a> `)}` : ''}</span>`}</div>`}
     <div class="canvas" ref=${scroller}>
       ${!tasks.length && html`<div class="canvas-empty"><p><b>${tr('暂无任务。')}</b>${tr('可先新建任务；如需提前规划后续步骤，可将其保存为草稿（草稿不会运行）。')}</p>
@@ -581,13 +443,13 @@ function Canvas({ pid, types, tasks, edges, view, selected, collapse, byId, onNe
                 <path d="M0,1 L10,5 L0,9 z" class=${`arrow ${k}`} /></marker>`)}</defs>
             <text x="12" y="27" class="lane-title">${tr('开始日期')}</text>
             ${L.rows.map((r, i) => (i && r.day === L.rows[i - 1].day) ? null : html`
-              ${i > 0 && !r.draft && html`<line x1="8" y1=${r.y - LAYER_GAP / 2} x2=${L.width - 8} y2=${r.y - LAYER_GAP / 2} class="day-rule" />`}
+              ${i > 0 && !r.draft && html`<line x1="8" y1=${r.y - 5} x2=${L.width - 8} y2=${r.y - 5} class="day-rule" />`}
               ${!r.draft && html`<text x="12" y=${r.y + 19} class="day">${r.day}</text>`}`)}
             ${laneIds.map((id, i) => html`<rect x=${laneX(i) - 14} y="6" width=${NODE_W + 28} height=${L.height - 12} rx="8"
               class=${`lane-band ${drag && drag.to === id && (drag.kind === 'lane' ? drag.id !== id : byId.get(drag.id)?.type !== id) ? 'drop' : ''}`} />`)}
             ${L.draftTop != null && html`<rect x="6" y=${L.draftTop - 6} width=${L.width - 12} height=${L.height - L.draftTop} rx="8" class="draft-band" />
               <text x="12" y=${L.draftTop + 12} class="draft-title">${tr('草稿（未纳入托管，不会运行）')}</text>`}
-            ${visEdges.map((e, i) => {
+            ${drawn.map((e, i) => {
               const cls = `edge ${e.kind} ${onPath(e) ? 'hl' : lin ? 'dim' : ''}`;
               return html`<g key=${`${e.from}>${e.to}`}>
                 <path d=${ds[i]} class=${cls} marker-end=${`url(#arrow-${e.kind})`} />

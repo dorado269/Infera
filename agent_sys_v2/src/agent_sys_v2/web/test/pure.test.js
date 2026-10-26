@@ -70,8 +70,8 @@ test('edgePaths: one SVG path per edge, from the upstream card to the downstream
   const L = layout(tasks, edges, ['develop'], new Set());
   const [ab, ac] = edgePaths(edges, L.pos);
   const a = L.pos.get('develop/a'), b = L.pos.get('develop/b');
-  assert.ok(ab.startsWith(`M${a.x + a.w / 2},${a.y + a.h} C`) && ab.endsWith(`${b.x + b.w / 2},${b.y}`));  // next row: bottom to top
-  assert.ok(ac.startsWith(`M${a.x + a.w},`));                                                                  // same lane, further down: round the right side
+  assert.equal(ab, `M${a.x + a.w / 2},${a.y + a.h} L${a.x + a.w / 2},${b.y}`);  // next row, same lane: straight down
+  assert.ok(ac.startsWith(`M${a.x + a.w},`));                                   // same lane, further down: round the right side
 });
 
 test('laneAt and moveLane: where a dragged lane title or card lands, and the lane order after a lane moves', () => {
